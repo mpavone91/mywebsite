@@ -1,2 +1,7 @@
-console.log("Hello, my name is Massimo")
-console.log("Hello, my name is Mafe")
+var Person = require('./modules/Person');
+
+var massimo = new Person("Massimo Pavone", "Blue");
+massimo.greet();
+
+var mafe = new Person("Mafe Gomez", "Gold");
+mafe.greet();
