@@ -1,7 +1,11 @@
+var $ = require('jquery');
+
 var Person = require('./modules/Person');
 
-var massimo = new Person("Massimo Pavone", "Blue");
-massimo.greet();
+alert("testing 1231112");
 
-var mafe = new Person("Mafe Gomez", "Gold");
-mafe.greet();
+// var massimo = new Person("Massimo Pavone", "Blue");
+// massimo.greet();
+//
+// var mafe = new Person("Mafe Gomez", "Gold");
+// mafe.greet();
