@@ -572,6 +572,10 @@ background-color: #d59541;
     max-width: 976px;
   }
 
+.wrapper--narrow {
+    max-width: 470px;
+  }
+
 .wrapper--no-padding-until-medium {
     padding-left: 0;
     padding-right: 0;
@@ -891,6 +895,19 @@ background-color: #d59541;
 .section-title--blue {
     color: #2f5572;
   }
+
+.section-title--less-margin {
+    margin-bottom: 0;
+    margint-top: 0;
+  }
+
+@media (min-width: 800px) {
+
+.section-title--less-margin {
+      margin-bottom: 1.3rem;
+      margint-top: 0
+  }
+}
 
 .section-title__icon {
     display: block;
@@ -1285,3 +1302,107 @@ background-color: #d59541;
     -webkit-transform: scale(1);
             transform: scale(1);
   }
+
+.modal {
+  position: fixed;
+  z-index: 5;
+  background-color: rgba(255, 255, 255, .94);
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  opacity: 0;
+  visibility: hidden;
+  -webkit-transform: scale(1.2);
+          transform: scale(1.2);
+  -webkit-transition: all .3s ease-out;
+  transition: all .3s ease-out;
+}
+
+.modal--is-visible {
+    opacity: 1;
+    visibility: visible;
+    -webkit-transform: scale(1);
+            transform: scale(1);
+  }
+
+.modal__inner {
+    position: absolute;
+    width: 100%;
+    top: 20%;
+  }
+
+.modal__description {
+    color: #d59541;
+    text-align: center;
+    font-size: 1.3rem;
+    font-weight: 300;
+    line-height: 1.65;
+  }
+
+.modal__close {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    font-size: 2rem;
+    -webkit-transform: scaleX(1.2);
+            transform: scaleX(1.2);
+    -webkit-transform-origin: 100% 0;
+            transform-origin: 100% 0;
+    color: #2f5572;
+    cursor: pointer;
+  }
+
+.modal__close:hover {
+      color: #d59541;
+    }
+
+.social-icons {
+  text-align: center;
+}
+
+.fa {
+padding: 20px;
+font-size: 30px;
+width: 50px;
+text-align: center;
+text-decoration: none;
+background: #3B5998;
+color: white;
+border-radius: 50%;
+
+}
+
+.fa:hover {
+  opacity: 0.7;
+}
+
+.fa-twitter {
+     padding: 20px;
+     font-size: 30px;
+     width: 50px;
+     text-align: center;
+     text-decoration: none;
+     background: #55ACEE;
+     color: white;
+     border-radius: 50%;
+   }
+
+.fa-twitter:hover {
+       opacity: 0.7;
+     }
+
+.fa-instagram {
+     padding: 20px;
+     font-size: 30px;
+     width: 50px;
+     text-align: center;
+     text-decoration: none;
+     background: #125688;
+     color: white;
+     border-radius: 50%;
+   }
+
+.fa-instagram:hover {
+       opacity: 0.7;
+     }
