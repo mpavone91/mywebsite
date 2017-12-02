@@ -11118,7 +11118,6 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 var mobileMenu = new _mobilemenu2.default();
 new _revealonscroll2.default((0, _jquery2.default)(".feature-item"), "85%");
 new _revealonscroll2.default((0, _jquery2.default)(".testimonial"), "75%");
-new _revealonscroll2.default((0, _jquery2.default)(".generic-content-container"), "80%");
 var stickyHeader = new _StickyHeader2.default();
 var modal = new _Modal2.default();
 
