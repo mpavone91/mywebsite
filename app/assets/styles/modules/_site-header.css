@@ -1,3 +1,7 @@
+.icon-earth:before {
+  content: "\e9ca";
+  margin-right: 5px;
+}
 .site-header {
   padding: 10px 0;
   position: absolute;
@@ -26,13 +30,22 @@
 
   &__logo {
     position: absolute;
+    width: 200px;
     top: 0;
     left: 50%;
     transform: translateX(-50%) scale(0.8);
-    transition: transform .3s ease-out;
+    transition: transform .4s ease-out;
     transform-origin: 50% 0%;
     background-color: $mainBlue;
-    padding: 25px 36px;
+    padding: 18px 15px;
+
+
+    &-h2 {
+      color: #FFFFFF;
+      font-style: normal;
+      font-weight: 400;
+      font-size: 1.6rem;
+    }
 
     @mixin atMedium {
       left: auto;

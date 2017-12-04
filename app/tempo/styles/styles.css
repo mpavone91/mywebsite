@@ -514,8 +514,8 @@ background-color: #d59541;
   }
 
 .large-hero__title {
-    font-weight: 300;
-    color: #2f5572;
+    font-weight: 400;
+    color: #FFFFFF;
     font-size: 2.3rem;
     margin: 0;
 
@@ -531,7 +531,7 @@ background-color: #d59541;
 
 .large-hero__subtitle {
     font-weight: 300;
-    color: #2f5572;
+    color: #FFFFFF;
     font-size: 1.6rem;
     margin: 0;
   }
@@ -1039,6 +1039,11 @@ background-color: #d59541;
   }
 }
 
+.icon-earth:before {
+  content: "\e9ca";
+  margin-right: 5px;
+}
+
 .site-header {
   padding: 10px 0;
   position: absolute;
@@ -1073,19 +1078,27 @@ background-color: #d59541;
 
 .site-header__logo {
     position: absolute;
+    width: 200px;
     top: 0;
     left: 50%;
     -webkit-transform: translateX(-50%) scale(0.8);
             transform: translateX(-50%) scale(0.8);
-    -webkit-transition: -webkit-transform .3s ease-out;
-    transition: -webkit-transform .3s ease-out;
-    transition: transform .3s ease-out;
-    transition: transform .3s ease-out, -webkit-transform .3s ease-out;
+    -webkit-transition: -webkit-transform .4s ease-out;
+    transition: -webkit-transform .4s ease-out;
+    transition: transform .4s ease-out;
+    transition: transform .4s ease-out, -webkit-transform .4s ease-out;
     -webkit-transform-origin: 50% 0%;
             transform-origin: 50% 0%;
     background-color: #2f5572;
-    padding: 25px 36px;
+    padding: 18px 15px;
   }
+
+.site-header__logo-h2 {
+      color: #FFFFFF;
+      font-style: normal;
+      font-weight: 400;
+      font-size: 1.6rem;
+    }
 
 @media (min-width: 800px) {
 
@@ -1329,7 +1342,7 @@ background-color: #d59541;
 .modal__inner {
     position: absolute;
     width: 100%;
-    top: 20%;
+    top: auto;
   }
 
 .modal__description {
