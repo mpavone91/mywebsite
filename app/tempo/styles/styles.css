@@ -516,6 +516,7 @@ background-color: #d59541;
     left: 0;
     width: 100%;
     text-align: center;
+    background: rgba(255, 255, 255, .3);
   }
 
 .large-hero__title {
@@ -1378,52 +1379,17 @@ background-color: #d59541;
       color: #d59541;
     }
 
-.social-icons {
-  text-align: center;
+.fa-facebook-official {
+  float: left;
+  margin-left: 40%;
+  color: #3b5998;
 }
 
-.fa {
-padding: 20px;
-font-size: 30px;
-width: 50px;
-text-align: center;
-text-decoration: none;
-background: #3B5998;
-color: white;
-border-radius: 50%;
-
+.fa-whatsapp {
+  float: left;
+  margin-left: 10%;
 }
 
-.fa:hover {
-  opacity: 0.7;
+.link-social {
+  color: #25D366;
 }
-
-.fa-twitter {
-     padding: 20px;
-     font-size: 30px;
-     width: 50px;
-     text-align: center;
-     text-decoration: none;
-     background: #55ACEE;
-     color: white;
-     border-radius: 50%;
-   }
-
-.fa-twitter:hover {
-       opacity: 0.7;
-     }
-
-.fa-instagram {
-     padding: 20px;
-     font-size: 30px;
-     width: 50px;
-     text-align: center;
-     text-decoration: none;
-     background: #125688;
-     color: white;
-     border-radius: 50%;
-   }
-
-.fa-instagram:hover {
-       opacity: 0.7;
-     }
