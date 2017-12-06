@@ -1381,13 +1381,29 @@ background-color: #d59541;
 
 .fa-facebook-official {
   float: left;
-  margin-left: 40%;
+  margin-left: 27%;
   color: #3b5998;
+}
+
+@media (min-width: 800px) {
+
+.fa-facebook-official {
+   float: left;
+  margin-left: 40%
+}
 }
 
 .fa-whatsapp {
   float: left;
-  margin-left: 10%;
+  margin-left: 12%;
+}
+
+@media (min-width: 800px) {
+
+.fa-whatsapp {
+  	  float: left;
+  margin-left: 10%
+}
 }
 
 .link-social {
