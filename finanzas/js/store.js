@@ -63,6 +63,11 @@ export async function signUp(email, password) {
   return Boolean(data.session);
 }
 
+export async function updatePassword(password) {
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw error;
+}
+
 export async function signOut() {
   await supabase.auth.signOut();
   state.categories = [];

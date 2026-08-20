@@ -1,5 +1,5 @@
 import { el, esc, toast } from '../utils.js';
-import { signIn, signUp } from '../store.js';
+import { signIn, signUp, updatePassword } from '../store.js';
 
 /** Login. Un único usuario, email + contraseña; la sesión se guarda en el navegador. */
 export function renderAuth() {
@@ -85,7 +85,7 @@ function translateAuthError(err) {
   return msg || 'No se pudo completar la operación';
 }
 
-/** Panel de cuenta: email y cierre de sesión. */
+/** Panel de cuenta: email, cambio de contraseña y cierre de sesión. */
 export function accountSheetContent(user, onSignOut) {
   const node = el(`
     <div class="stack">
@@ -93,6 +93,23 @@ export function accountSheetContent(user, onSignOut) {
         <div class="tiny muted">Sesión iniciada como</div>
         <div style="font-weight:600">${esc(user?.email || '—')}</div>
       </div>
+
+      <details class="card" style="padding:12px 14px">
+        <summary style="cursor:pointer;font-weight:600;font-size:15px">Cambiar contraseña</summary>
+        <div class="stack" style="padding-top:12px">
+          <label class="field">
+            <span>Nueva contraseña</span>
+            <input type="password" data-new-password autocomplete="new-password"
+                   minlength="8" placeholder="Mínimo 8 caracteres">
+          </label>
+          <label class="field">
+            <span>Repítela</span>
+            <input type="password" data-repeat-password autocomplete="new-password" placeholder="••••••••">
+          </label>
+          <button class="btn btn-primary btn-block" data-change>Guardar contraseña</button>
+        </div>
+      </details>
+
       <p class="tiny muted" style="margin:0">
         Tus datos viven en tu propio proyecto de Supabase y sólo son accesibles con tu usuario
         (RLS activo en todas las tablas).
@@ -100,6 +117,31 @@ export function accountSheetContent(user, onSignOut) {
       <button class="btn btn-danger btn-block" data-signout>Cerrar sesión</button>
     </div>
   `);
+
+  const changeBtn = node.querySelector('[data-change]');
+  changeBtn.addEventListener('click', async () => {
+    const password = node.querySelector('[data-new-password]').value;
+    const repeat = node.querySelector('[data-repeat-password]').value;
+
+    if (password.length < 8) { toast('La contraseña necesita al menos 8 caracteres', 'err'); return; }
+    if (password !== repeat) { toast('Las dos contraseñas no coinciden', 'err'); return; }
+
+    changeBtn.disabled = true;
+    changeBtn.innerHTML = '<span class="spinner"></span>';
+    try {
+      await updatePassword(password);
+      toast('Contraseña actualizada');
+      node.querySelector('[data-new-password]').value = '';
+      node.querySelector('[data-repeat-password]').value = '';
+      node.querySelector('details').open = false;
+    } catch (err) {
+      toast(translateAuthError(err), 'err');
+    } finally {
+      changeBtn.disabled = false;
+      changeBtn.textContent = 'Guardar contraseña';
+    }
+  });
+
   node.querySelector('[data-signout]').addEventListener('click', onSignOut);
   return node;
 }
