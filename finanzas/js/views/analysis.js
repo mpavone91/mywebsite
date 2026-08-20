@@ -1,7 +1,8 @@
 import { el, esc, eur, pct, monthKey, monthLabel, daysInMonth, elapsedDays, round2 } from '../utils.js';
-import { state } from '../store.js';
+import { state, personalData } from '../store.js';
 import { analyzeMonth } from '../analysis.js';
 import { debtInsights } from '../debts.js';
+import { accountInsights } from '../accounts.js';
 import { RULES } from '../config.js';
 import { incomeVsExpenseBars, cumulativeSpendLine } from '../charts.js';
 import { emptyState } from '../ui.js';
@@ -27,7 +28,7 @@ export function insightCard(insight) {
 /** Pantalla "Análisis": el gestor financiero automático del mes en curso. */
 export function renderAnalysis() {
   const month = monthKey();
-  const a = analyzeMonth(month, state);
+  const a = analyzeMonth(month, personalData());
 
   const screen = el(`
     <div class="screen">
@@ -50,6 +51,7 @@ export function renderAnalysis() {
     ...debtInsights(state.debts, state.debtPayments, {
       expenses: state.expenses, incomes: state.incomes, month,
     }),
+    ...accountInsights(state, month),
   ]
     .map((insight, i) => ({ insight, i }))
     .sort((x, y) => (rank[x.insight.level] - rank[y.insight.level]) || (x.i - y.i))

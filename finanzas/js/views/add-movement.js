@@ -1,5 +1,6 @@
 import { el, esc, eur, todayISO, toast, haptic } from '../utils.js';
-import { openSheet, confirmSheet } from '../ui.js';
+import { openSheet, confirmSheet, amountKeypad } from '../ui.js';
+import { accountChips, rememberedAccount, rememberAccount } from './accounts.js';
 import {
   addExpense, addIncome, updateMovement, deleteMovement,
   frequentExpenseCategories, categoriesOf, state,
@@ -13,67 +14,6 @@ import {
  * (1·2·5·0 -> 12,50 €), no hace falta buscar la coma ni abrir el teclado del
  * sistema, y las categorías salen ordenadas por uso reciente.
  */
-
-/* ---------------------------------------------------------------- teclado --- */
-
-export function amountKeypad(initialCents = 0) {
-  const node = el(`
-    <div>
-      <div class="amount-display">
-        <div class="val num" data-val>0,00 €</div>
-        <div class="hint" data-hint>Teclea el importe</div>
-      </div>
-      <div class="keypad">
-        ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button type="button" data-k="${n}">${n}</button>`).join('')}
-        <button type="button" data-k="00">00</button>
-        <button type="button" data-k="0">0</button>
-        <button type="button" data-k="del" aria-label="Borrar">⌫</button>
-      </div>
-    </div>
-  `);
-
-  let cents = initialCents;
-  const listeners = [];
-  const valEl = node.querySelector('[data-val]');
-
-  function paint() {
-    valEl.textContent = eur(cents / 100);
-    valEl.classList.toggle('muted', cents === 0);
-    listeners.forEach((fn) => fn(cents / 100));
-  }
-
-  node.querySelectorAll('[data-k]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const k = btn.dataset.k;
-      if (k === 'del') cents = Math.floor(cents / 10);
-      else if (cents < 1e9) cents = cents * (k === '00' ? 100 : 10) + Number(k);
-      haptic(8);
-      paint();
-    });
-  });
-
-  // También se puede teclear con un teclado físico, salvo cuando el foco está
-  // en un campo de texto (nota, fuente…): allí los dígitos son del campo.
-  const onKey = (e) => {
-    const tag = e.target?.tagName;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-    if (e.key >= '0' && e.key <= '9') { cents = cents * 10 + Number(e.key); paint(); }
-    else if (e.key === 'Backspace') { cents = Math.floor(cents / 10); paint(); }
-    else return;
-    e.preventDefault();
-  };
-  document.addEventListener('keydown', onKey);
-
-  paint();
-
-  return {
-    node,
-    get value() { return cents / 100; },
-    onChange(fn) { listeners.push(fn); fn(cents / 100); },
-    setHint(text) { node.querySelector('[data-hint]').textContent = text; },
-    dispose() { document.removeEventListener('keydown', onKey); },
-  };
-}
 
 /* ------------------------------------------------------------- categorías --- */
 
@@ -116,6 +56,7 @@ export function openExpenseSheet({ movement = null, onSaved } = {}) {
   return openSheet(editing ? 'Editar gasto' : 'Nuevo gasto', (close) => {
     keypad = amountKeypad(editing ? Math.round(movement.amount * 100) : 0);
     const chips = categoryChips(cats, movement?.category_id ?? null);
+    const accounts = accountChips(movement?.account_id ?? rememberedAccount('expense'));
 
     const body = el(`
       <div class="stack">
@@ -123,6 +64,10 @@ export function openExpenseSheet({ movement = null, onSaved } = {}) {
         <div>
           <div class="section-title" style="margin-top:14px">Categoría</div>
           <div data-chips></div>
+        </div>
+        <div data-accounts-block hidden>
+          <div class="section-title">Pagado desde</div>
+          <div data-accounts></div>
         </div>
         <details data-more ${editing ? 'open' : ''}>
           <summary class="muted small" style="cursor:pointer;padding:8px 0">Fecha, nota y recurrencia</summary>
@@ -152,6 +97,10 @@ export function openExpenseSheet({ movement = null, onSaved } = {}) {
 
     body.querySelector('[data-keypad]').appendChild(keypad.node);
     body.querySelector('[data-chips]').appendChild(chips.node);
+    if (accounts) {
+      body.querySelector('[data-accounts]').appendChild(accounts.node);
+      body.querySelector('[data-accounts-block]').hidden = false;
+    }
 
     const saveBtn = body.querySelector('[data-save]');
     const refresh = () => {
@@ -171,6 +120,7 @@ export function openExpenseSheet({ movement = null, onSaved } = {}) {
       const payload = {
         amount,
         category_id: chips.value,
+        account_id: accounts?.value ?? null,
         note: body.querySelector('[data-note]').value,
         date: body.querySelector('[data-date]').value || todayISO(),
         is_recurring: body.querySelector('[data-recurring]').checked,
@@ -179,6 +129,7 @@ export function openExpenseSheet({ movement = null, onSaved } = {}) {
       try {
         if (editing) await updateMovement('expense', movement.id, payload);
         else await addExpense(payload);
+        if (payload.account_id) rememberAccount('expense', payload.account_id);
         haptic(18);
         keypad.dispose();
         close(true);
@@ -223,6 +174,7 @@ export function openIncomeSheet({ movement = null, prefill = null, onSaved } = {
     const initial = movement || prefill;
     keypad = amountKeypad(initial?.amount ? Math.round(initial.amount * 100) : 0);
     const chips = categoryChips(cats, initial?.category_id ?? null);
+    const accounts = accountChips(initial?.account_id ?? rememberedAccount('income'));
 
     const body = el(`
       <div class="stack">
@@ -238,6 +190,10 @@ export function openIncomeSheet({ movement = null, prefill = null, onSaved } = {
         <div>
           <div class="section-title" style="margin-top:6px">Categoría</div>
           <div data-chips></div>
+        </div>
+        <div data-accounts-block hidden>
+          <div class="section-title">Entra en</div>
+          <div data-accounts></div>
         </div>
         <label class="field">
           <span>Fecha</span>
@@ -257,6 +213,10 @@ export function openIncomeSheet({ movement = null, prefill = null, onSaved } = {
 
     body.querySelector('[data-keypad]').appendChild(keypad.node);
     body.querySelector('[data-chips]').appendChild(chips.node);
+    if (accounts) {
+      body.querySelector('[data-accounts]').appendChild(accounts.node);
+      body.querySelector('[data-accounts-block]').hidden = false;
+    }
 
     const saveBtn = body.querySelector('[data-save]');
     const refresh = () => {
@@ -275,6 +235,7 @@ export function openIncomeSheet({ movement = null, prefill = null, onSaved } = {
       const payload = {
         amount,
         category_id: chips.value,
+        account_id: accounts?.value ?? null,
         source: body.querySelector('[data-source]').value,
         date: body.querySelector('[data-date]').value || todayISO(),
         is_recurring: body.querySelector('[data-recurring]').checked,
@@ -283,6 +244,7 @@ export function openIncomeSheet({ movement = null, prefill = null, onSaved } = {
       try {
         if (editing) await updateMovement('income', movement.id, payload);
         else await addIncome(payload);
+        if (payload.account_id) rememberAccount('income', payload.account_id);
         haptic(18);
         keypad.dispose();
         close(true);

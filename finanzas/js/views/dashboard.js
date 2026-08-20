@@ -1,12 +1,14 @@
 import {
   el, esc, eur, eurSigned, pct, monthKey, monthLabel, todayISO, dayLabel, groupBy, sum, round2,
 } from '../utils.js';
-import { state, categoryById } from '../store.js';
+import { state, personalData, categoryById, accountById } from '../store.js';
 import {
   monthTotals, categoryBreakdown, prevMonthPace, projection, missingRecurringIncomes,
 } from '../analysis.js';
 import { categoryDonut } from '../charts.js';
 import { openExpenseSheet, openIncomeSheet } from './add-movement.js';
+import { openTransferSheet } from './accounts.js';
+import { accountsOverview } from '../accounts.js';
 import { openPaymentSheet } from './debts.js';
 import { debtsOverview, daysUntil, simulatePayoff } from '../debts.js';
 import { emptyState } from '../ui.js';
@@ -15,7 +17,9 @@ import { emptyState } from '../ui.js';
 export function renderDashboard() {
   const month = monthKey();
   const today = todayISO();
-  const { expenses, incomes, categories } = state;
+  // Sólo lo que sale de tu bolsillo: el dinero del negocio va aparte
+  const { expenses, incomes, categories } = personalData();
+  const accounts = accountsOverview(state, month);
 
   const t = monthTotals(month, expenses, incomes);
   const rows = categoryBreakdown(month, expenses, categories);
@@ -88,6 +92,8 @@ export function renderDashboard() {
             <small>Nómina y otros</small>
           </button>
         </div>
+
+        <div data-accounts-strip></div>
 
         <div data-debt-strip></div>
         <div data-reminders class="stack"></div>
@@ -187,6 +193,24 @@ export function renderDashboard() {
   screen.querySelector('[data-recent]').appendChild(recentMovements());
 
   /* --- acciones --------------------------------------------------------- */
+  /* --- tira de cuentas -------------------------------------------------- */
+  if (accounts.rows.length) {
+    const strip = el(`
+      <div class="card row-between" style="padding:12px 14px;gap:12px">
+        <span style="min-width:0">
+          <span class="tiny muted" style="display:block">Disponible</span>
+          <strong class="num" style="font-size:17px">${eur(accounts.available)}</strong>
+          ${accounts.businessMonthSpend > 0
+    ? `<span class="tiny muted" style="display:block">${eur(accounts.businessMonthSpend)} gastados del negocio este mes</span>`
+    : ''}
+        </span>
+        <button class="btn" data-transfer style="min-height:38px;padding:0 12px">↔ Traspaso</button>
+      </div>
+    `);
+    strip.querySelector('[data-transfer]').addEventListener('click', () => openTransferSheet({}));
+    screen.querySelector('[data-accounts-strip]').appendChild(strip);
+  }
+
   screen.querySelector('[data-add-expense]').addEventListener('click', () => openExpenseSheet());
   screen.querySelector('[data-add-income]').addEventListener('click', () => openIncomeSheet());
   screen.querySelector('[data-account]').addEventListener('click', () => {
@@ -232,7 +256,9 @@ export function recentMovements(limit = 12) {
       const cat = categoryById(m.category_id);
       const color = cat?.color || (m.kind === 'income' ? 'var(--pos)' : '#94a3b8');
       const title = m.label || cat?.name || (m.kind === 'income' ? 'Ingreso' : 'Gasto');
-      const subtitle = cat && m.label ? cat.name : (m.is_recurring ? 'Recurrente' : '');
+      const account = accountById(m.account_id);
+      const parts = [cat && m.label ? cat.name : null, account?.name].filter(Boolean);
+      const subtitle = parts.length ? parts.join(' · ') : (m.is_recurring ? 'Recurrente' : '');
 
       const row = el(`
         <button class="list-item" type="button">
