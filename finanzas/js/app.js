@@ -1,7 +1,7 @@
 import { el, toast } from './utils.js';
 import {
   state, getSession, onAuthChange, loadAll, subscribe, signOut,
-  lockSession, restoreSession, currentSession,
+  lockSession, restoreSession, currentSession, describeLoadError,
 } from './store.js';
 import { destroyCharts } from './charts.js';
 import { openSheet, skeletonScreen } from './ui.js';
@@ -60,6 +60,8 @@ function currentPath() {
 let rendering = false;
 // El usuario ha pedido entrar con contraseña en vez de con el PIN
 let usePasswordLogin = false;
+// Último fallo de carga, para poder ofrecer un reintento en vez de una pantalla muerta
+let loadError = null;
 
 function render() {
   if (!state.user) {
@@ -76,7 +78,7 @@ function render() {
   }
 
   if (!state.ready) {
-    root.replaceChildren(skeletonScreen(), navBar('/'));
+    root.replaceChildren(loadError ? loadErrorScreen() : skeletonScreen(), navBar('/'));
     return;
   }
 
@@ -94,6 +96,47 @@ function render() {
   }
 
   document.title = `${route.title} · Finanzas`;
+}
+
+/** Pantalla de "no se pudo cargar", con reintento a mano. */
+function loadErrorScreen() {
+  const screen = el(`
+    <div class="screen">
+      <div class="screen-head"><div><h1>Vaya</h1><p>No se han podido cargar tus datos</p></div></div>
+      <div class="card insight is-alert">
+        <div class="icon">⚠️</div>
+        <div>
+          <h3>Algo ha fallado al conectar</h3>
+          <p data-msg></p>
+          <div class="action">
+            <button class="btn btn-primary" data-retry>Reintentar</button>
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-ghost btn-block" data-signout style="margin-top:12px">Cerrar sesión</button>
+    </div>
+  `);
+
+  screen.querySelector('[data-msg]').textContent = describeLoadError(loadError);
+
+  const retry = screen.querySelector('[data-retry]');
+  retry.addEventListener('click', async () => {
+    retry.disabled = true;
+    retry.innerHTML = '<span class="spinner"></span>';
+    loadError = null;
+    render();
+    await hydrate();
+  });
+
+  screen.querySelector('[data-signout]').addEventListener('click', async () => {
+    lock.disable();
+    await signOut();
+    loadError = null;
+    history.replaceState(null, '', '#/');
+    render();
+  });
+
+  return screen;
 }
 
 function navBar(active) {
@@ -231,17 +274,30 @@ function handleShortcut() {
   shortcut();
 }
 
+// Sin este cerrojo, dos eventos de sesión solapados lanzarían dos cargas a la
+// vez; y como la carga renueva el token cuando el servidor lo rechaza, eso
+// realimentaba el propio evento y acababa en un bucle de repintados.
+let hydrating = false;
+
 async function hydrate() {
-  if (!state.ready) {
-    render();
-    try {
-      await loadAll();
-    } catch (err) {
-      toast(err.message || 'No se pudieron cargar los datos', 'err');
+  if (hydrating) return;
+  hydrating = true;
+  try {
+    if (!state.ready) {
+      loadError = null;
+      render();
+      try {
+        await loadAll();
+      } catch (err) {
+        loadError = err;
+        toast(describeLoadError(err), 'err');
+      }
     }
+    render();
+    handleShortcut();
+  } finally {
+    hydrating = false;
   }
-  render();
-  handleShortcut();
 }
 
 async function boot() {
@@ -253,12 +309,20 @@ async function boot() {
     maybeOfferLock();
   }
 
-  onAuthChange(async (session) => {
+  onAuthChange(async (session, event) => {
     if (!session) { render(); return; }
 
     // El token rota cada hora: hay que volver a cifrarlo o el PIN se quedaría
     // con uno caducado.
     if (lock.isUnlocked()) lock.persistSession(session).catch(() => {});
+
+    // Una rotación de token no es un login: los datos ya están cargados y
+    // volver a pedirlos aquí es lo que realimentaba el bucle.
+    if (event === 'TOKEN_REFRESHED') return;
+
+    // Si la última carga falló, el usuario decide cuándo reintentar desde la
+    // pantalla de error, en vez de que la app lo intente sola sin parar.
+    if (loadError) return;
 
     await hydrate();
     maybeOfferLock();

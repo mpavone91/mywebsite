@@ -50,9 +50,9 @@ export async function getSession() {
 }
 
 export function onAuthChange(fn) {
-  return supabase.auth.onAuthStateChange((_event, session) => {
+  return supabase.auth.onAuthStateChange((event, session) => {
     state.user = session?.user ?? null;
-    fn(session);
+    fn(session, event);
   });
 }
 
@@ -141,7 +141,25 @@ async function fetchRange(table, from, to) {
   return data.map(normalize);
 }
 
-export async function loadAll() {
+/**
+ * ¿El servidor ha rechazado el token por una cuestión de tiempo?
+ *
+ * "JWT issued at future" sale cuando el reloj del servicio que valida el token
+ * va por detrás del que lo emitió: el token acaba de nacer y para el validador
+ * todavía no existe. Se corrige solo en segundos, así que no es motivo para
+ * echar a nadie de la app.
+ */
+function isTokenTimingError(err) {
+  const msg = String(err?.message || '').toLowerCase();
+  return msg.includes('issued at future')
+    || msg.includes('jwt expired')
+    || msg.includes('invalid jwt')
+    || msg.includes('bad_jwt');
+}
+
+const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+async function fetchEverything() {
   const from = `${shiftMonth(monthKey(), -(WINDOW_MONTHS - 1))}-01`;
 
   const [cats, expenses, incomes, debts, debtPayments, accounts, transfers] = await Promise.all([
@@ -155,20 +173,35 @@ export async function loadAll() {
     // Igual que los pagos: el saldo de cada cuenta necesita el histórico entero
     supabase.from('transfers').select('*').order('date', { ascending: false }),
   ]);
-  if (cats.error) throw cats.error;
-  if (debts.error) throw debts.error;
-  if (debtPayments.error) throw debtPayments.error;
-  if (accounts.error) throw accounts.error;
-  if (transfers.error) throw transfers.error;
+  for (const result of [cats, debts, debtPayments, accounts, transfers]) {
+    if (result.error) throw result.error;
+  }
 
-  state.categories = cats.data;
-  state.expenses = expenses;
-  state.incomes = incomes;
-  state.debts = debts.data.map(normalizeDebt);
-  state.debtPayments = debtPayments.data.map(normalize);
-  state.accounts = accounts.data.map(normalizeAccount);
-  state.transfers = transfers.data.map(normalize);
-  state.loadedFrom = from;
+  return { from, cats, expenses, incomes, debts, debtPayments, accounts, transfers };
+}
+
+export async function loadAll(attempt = 0) {
+  let data;
+  try {
+    data = await fetchEverything();
+  } catch (err) {
+    // Desfase de relojes en el servidor: pedimos un token nuevo y reintentamos
+    if (attempt < 2 && isTokenTimingError(err)) {
+      await supabase.auth.refreshSession().catch(() => {});
+      await delay(1500 * (attempt + 1));
+      return loadAll(attempt + 1);
+    }
+    throw err;
+  }
+
+  state.categories = data.cats.data;
+  state.expenses = data.expenses;
+  state.incomes = data.incomes;
+  state.debts = data.debts.data.map(normalizeDebt);
+  state.debtPayments = data.debtPayments.data.map(normalize);
+  state.accounts = data.accounts.data.map(normalizeAccount);
+  state.transfers = data.transfers.data.map(normalize);
+  state.loadedFrom = data.from;
   state.ready = true;
 
   // Usuario recién creado sin categorías (p. ej. si el trigger no llegó a correr)
@@ -181,6 +214,19 @@ export async function loadAll() {
   }
 
   emit();
+  return true;
+}
+
+/** Mensaje en cristiano para los fallos de carga. */
+export function describeLoadError(err) {
+  if (isTokenTimingError(err)) {
+    return 'El servidor ha rechazado la sesión por un desfase de reloj. Suele arreglarse solo en unos segundos.';
+  }
+  const msg = String(err?.message || '');
+  if (/failed to fetch|network|offline/i.test(msg)) {
+    return 'Sin conexión con el servidor. Comprueba tu internet.';
+  }
+  return msg || 'No se pudieron cargar los datos.';
 }
 
 /**

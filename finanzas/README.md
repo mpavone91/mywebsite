@@ -1,6 +1,7 @@
 # Finanzas Personales
 
-App de control de gastos e ingresos de uso personal, pensada para sustituir el Excel.
+App de control de gastos e ingresos, pensada para sustituir el Excel. Cada persona que se
+registra tiene sus propios datos, aislados por RLS.
 Registro rápido desde el móvil, cierre diario y mensual en tiempo real, y un bloque de
 análisis automático que explica en qué se va el dinero y qué recortar primero.
 
@@ -34,8 +35,9 @@ Las migraciones están en `supabase/migrations/` y se aplican en orden:
 | `0004_harden_functions.sql` | Revoca el `EXECUTE` público de las funciones `SECURITY DEFINER` e indexa las FK |
 | `0005_debts.sql` | Deudas y sus pagos + vista `debt_status` con el saldo pendiente |
 | `0006_accounts.sql` | Cuentas (bancos), traspasos, `account_id` en gastos e ingresos + vista `account_balances` |
+| `0007_generic_seed.sql` | Categorías sembradas genéricas (sin nombres propios) y limpieza de las ya creadas |
 
-Para recrear el proyecto desde cero, ejecuta los seis archivos por orden en el SQL Editor
+Para recrear el proyecto desde cero, ejecuta los siete archivos por orden en el SQL Editor
 de Supabase y cambia `SUPABASE_URL` / `SUPABASE_KEY` en `js/config.js`.
 
 ### 2. Crear tu usuario
@@ -44,10 +46,13 @@ La app usa email + contraseña. La primera vez, pulsa **Crear una** en la pantal
 Al darte de alta, el trigger siembra tus 12 categorías iniciales (8 de gasto, 4 de ingreso).
 
 > **Antes de registrarte**, en Supabase → *Authentication* → *Sign In / Providers* → *Email*:
-> desactiva **Confirm email**. Es una app de un solo usuario y el SMTP por defecto de Supabase
-> tiene límites muy bajos; sin esto te quedarías esperando un correo de confirmación.
-> Cuando ya tengas la cuenta creada, conviene desactivar **Allow new users to sign up**
-> para que nadie más pueda registrarse.
+> desactiva **Confirm email**. El SMTP por defecto de Supabase tiene límites muy bajos; sin
+> esto te quedarías esperando un correo de confirmación. Y cuando ya estén dadas de alta las
+> personas que van a usarla, desactiva **Allow new users to sign up** para cerrar el registro.
+
+Las categorías por defecto son genéricas a propósito (Nómina, Negocio, Extras, Otros
+ingresos): cada persona las renombra a su gusto desde ⚙ → *Categorías*. Lo mismo con las
+cuentas sugeridas, que son tipos y no marcas.
 
 ### 3. Desplegar en Vercel
 
@@ -167,12 +172,13 @@ junto al resto.
 Cada gasto e ingreso puede decir de qué cuenta sale o a cuál entra. La lógica está en
 `js/accounts.js`. Tres reglas la sostienen:
 
-**Un traspaso no es ni gasto ni ingreso.** Mover dinero de BBVA a Revolut cambia dónde está,
+**Un traspaso no es ni gasto ni ingreso.** Mover dinero de la cuenta de la nómina a otra
+cambia dónde está,
 no cuánto tienes. Por eso los traspasos viven en su propia tabla y no entran en ningún total
 del mes: si contaran, salir de la nómina y apartar para ahorro parecería un gasto enorme.
 
 **Una cuenta puede no ser tuya.** Marcándola como *negocio* (`counts_as_personal = false`)
-queda fuera de tus totales personales. Es el caso de SumUp: lo que pagas con el dinero del
+queda fuera de tus totales personales. Es el caso del TPV o la cuenta del negocio: lo que pagas con el dinero del
 local no sale de tu bolsillo, así que no ensucia tu tasa de ahorro ni tu gasto del mes.
 
 **Lo que gastas del negocio queda como pendiente.** El pendiente se calcula solo:
@@ -191,6 +197,25 @@ traspasos enviados`. Las cuentas de tipo *ahorro* se muestran aparte del disponi
 el dinero apartado no se confunda con el que puedes gastar.
 
 Las cuentas con movimientos no se borran: se archivan, igual que las categorías.
+
+---
+
+## Cuando el servidor rechaza la sesión
+
+Los servicios de Supabase que emiten el token y los que lo validan no comparten reloj. Si el
+validador va unos segundos por detrás, un token recién emitido le parece del futuro y responde
+`401 JWT issued at future`. Se corrige solo, pero dejaba la app en blanco.
+
+`loadAll()` detecta esos rechazos por tiempo, pide un token nuevo y reintenta hasta dos veces
+con una espera creciente. Si aun así no cede, se pinta una pantalla de error con el motivo en
+castellano y un botón de reintentar, en vez de un esqueleto que no llega nunca.
+
+Dos detalles que hacían falta para que eso no se volviera contra sí mismo:
+
+- `hydrate()` tiene un cerrojo: dos eventos de sesión solapados no lanzan dos cargas.
+- Una rotación de token (`TOKEN_REFRESHED`) ya no dispara una recarga de datos. Como el
+  reintento renueva el token, y renovar emite ese evento, se realimentaba en un bucle de
+  repintados.
 
 ---
 

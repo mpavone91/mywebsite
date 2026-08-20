@@ -273,7 +273,7 @@ export function openAccountSheet({ account = null } = {}) {
         <label class="field">
           <span>Nombre</span>
           <input type="text" data-name maxlength="40" data-autofocus
-                 placeholder="Ej. BBVA" value="${esc(account?.name || '')}">
+                 placeholder="Ej. el nombre de tu banco" value="${esc(account?.name || '')}">
         </label>
 
         <div>
@@ -432,7 +432,7 @@ export function openTransferSheet({ fromAccountId = null, toAccountId = null, am
         </label>
         <label class="field">
           <span>Nota (opcional)</span>
-          <input type="text" data-note maxlength="120" placeholder="Ej. separar para gastos, devolver al local…">
+          <input type="text" data-note maxlength="120" placeholder="Ej. separar para gastos, devolver al negocio…">
         </label>
 
         <button class="btn btn-primary btn-block btn-lg" data-save disabled>Guardar traspaso</button>

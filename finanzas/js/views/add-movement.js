@@ -78,7 +78,7 @@ export function openExpenseSheet({ movement = null, onSaved } = {}) {
             </label>
             <label class="field">
               <span>Nota (opcional)</span>
-              <input type="text" data-note maxlength="120" placeholder="Ej. Netflix, cena con Ana…"
+              <input type="text" data-note maxlength="120" placeholder="Ej. Netflix, cena fuera…"
                      value="${esc(movement?.note || '')}">
             </label>
             <label class="switch card" style="padding:12px 14px">
@@ -182,7 +182,7 @@ export function openIncomeSheet({ movement = null, prefill = null, onSaved } = {
         <label class="field">
           <span>Fuente</span>
           <input type="text" data-source list="income-sources" maxlength="80"
-                 placeholder="Ej. Nómina ePackPro" value="${esc(initial?.source || '')}">
+                 placeholder="Ej. Nómina" value="${esc(initial?.source || '')}">
           <datalist id="income-sources">
             ${sources.map((s) => `<option value="${esc(s)}"></option>`).join('')}
           </datalist>
