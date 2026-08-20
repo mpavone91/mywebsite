@@ -214,9 +214,9 @@ export function openLockSetupSheet({ session, user, onDone }) {
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span>';
         try {
-          await lock.enableBiometrics({ userId: user.id, userName: user.email });
+          const mode = await enableBiometricsWithConsent(user);
           close(true);
-          toast('Huella activada');
+          toast(mode ? 'Huella activada' : 'PIN activado');
           onDone?.();
         } catch (err) {
           toast(err.message || 'No se pudo activar la huella', 'err');
@@ -237,6 +237,42 @@ export function openLockSetupSheet({ session, user, onDone }) {
     askFirst();
     return host;
   });
+}
+
+/* ------------------------------------------------------- alta de la huella --- */
+
+/**
+ * Activa la huella pidiendo permiso explícito si el dispositivo no soporta PRF.
+ *
+ * Sin PRF la huella deja de ser la llave y pasa a ser una simple comprobación:
+ * la clave que abre la sesión queda guardada en el dispositivo sin cifrar. Es
+ * una rebaja real de seguridad, así que se pregunta antes de dejarla puesta.
+ *
+ * Registramos la credencial permitiendo ya el modo simple para no crear dos
+ * claves de acceso distintas; si el usuario dice que no, se deshace al momento.
+ *
+ * Devuelve 'prf', 'gate' o null si se canceló.
+ */
+async function enableBiometricsWithConsent(user) {
+  const mode = await lock.enableBiometrics({
+    userId: user.id,
+    userName: user.email,
+    allowFallback: true,
+  });
+
+  if (mode !== 'gate') return mode;
+
+  const ok = await confirmSheet(
+    'Tu móvil no puede usar la huella como llave',
+    'Puedo activarla igualmente, pero entonces sólo sirve de comprobación: la sesión quedará guardada en este móvil sin cifrar, así que quien lo tenga desbloqueado podría leerla. El PIN seguirá funcionando como siempre.',
+    { confirmLabel: 'Activarla igualmente', danger: false },
+  );
+
+  if (!ok) {
+    lock.removeBiometrics();
+    return null;
+  }
+  return 'gate';
 }
 
 /* -------------------------------------------------- ajustes desde la cuenta --- */
@@ -263,7 +299,10 @@ export function lockSettings({ session, user, onChanged }) {
 
   stateEl.textContent = !configured
     ? 'Desactivado: entras con email y contraseña'
-    : withBio ? 'PIN y huella activados' : 'PIN activado';
+    : !withBio ? 'PIN activado'
+      : lock.biometricMode() === 'gate'
+        ? 'PIN y huella · la huella sólo comprueba, la sesión no va cifrada'
+        : 'PIN y huella activados';
 
   if (!configured) {
     const btn = el('<button class="btn btn-block" data-setup>Activar PIN o huella</button>');
@@ -282,11 +321,12 @@ export function lockSettings({ session, user, onChanged }) {
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner"></span>';
         try {
-          await lock.enableBiometrics({ userId: user.id, userName: user.email });
-          toast('Huella activada');
+          const mode = await enableBiometricsWithConsent(user);
+          if (mode) toast('Huella activada');
           onChanged?.();
         } catch (err) {
           toast(err.message || 'No se pudo activar la huella', 'err');
+        } finally {
           btn.disabled = false;
           btn.textContent = 'Añadir huella / Face ID';
         }

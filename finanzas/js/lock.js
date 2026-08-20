@@ -199,7 +199,7 @@ export async function biometricsSupported() {
  * Registra la huella envolviendo la MISMA clave maestra que el PIN.
  * Requiere estar desbloqueado (el PIN ya puesto en esta sesión).
  */
-export async function enableBiometrics({ userId, userName }) {
+export async function enableBiometrics({ userId, userName, allowFallback = false }) {
   const store = readStore();
   if (!store?.pin) throw new Error('Configura antes un PIN de respaldo');
   if (!masterBytes) throw new Error('Desbloquea con tu PIN antes de añadir la huella');
@@ -235,20 +235,32 @@ export async function enableBiometrics({ userId, userName }) {
   if (!credential) throw new Error('No se pudo registrar la huella');
 
   const created = credential.getClientExtensionResults()?.prf;
-  if (created?.enabled === false) {
-    throw new Error('Este dispositivo no puede derivar una clave de la huella. Sigue usando el PIN.');
-  }
-
   const credentialId = b64.to(credential.rawId);
 
-  // Si el registro no trajo el secreto (Safari y algún Android lo dan sólo al
-  // verificar), lo pedimos con una verificación inmediata.
-  const secret = created?.results?.first
-    ? new Uint8Array(created.results.first)
-    : await evaluatePrf(credentialId, prfSalt);
+  // Tres desenlaces posibles:
+  //   - el registro ya trae el secreto (Chrome en Android),
+  //   - hay que pedirlo en una verificación (Safari y algún Android),
+  //   - el dispositivo dice de entrada que no sabe (enabled: false).
+  let secret = null;
+  if (created?.results?.first) {
+    secret = new Uint8Array(created.results.first);
+  } else if (created?.enabled !== false) {
+    secret = await evaluatePrf(credentialId, prfSalt);
+  }
 
   if (!secret) {
-    throw new Error('Este dispositivo no devolvió una clave para la huella. Sigue usando el PIN — si quieres, borra la clave de acceso que se acaba de crear desde el gestor de contraseñas.');
+    if (!allowFallback) {
+      const err = new Error('Este dispositivo no devolvió una clave para la huella. Sigue usando el PIN — si quieres, borra la clave de acceso que se acaba de crear desde el gestor de contraseñas.');
+      err.code = 'NO_PRF';
+      throw err;
+    }
+    // Modo simple: la huella sólo hace de comprobación, no de llave.
+    // Menos seguro (ver enableBiometricGate) pero funciona en cualquier móvil.
+    writeStore({
+      ...store,
+      biometric: { mode: 'gate', credentialId, master: b64.to(masterBytes) },
+    });
+    return 'gate';
   }
 
   // Envolvemos la MISMA clave maestra con la clave derivada de la huella
@@ -258,32 +270,68 @@ export async function enableBiometrics({ userId, userName }) {
   writeStore({
     ...store,
     biometric: {
+      mode: 'prf',
       salt: b64.to(salt),
       credentialId,
       prfSalt: b64.to(prfSalt),
       ...(await seal(key, masterBytes)),
     },
   });
+  return 'prf';
 }
 
-/** Descifra la sesión tras verificar la huella / Face ID. */
+/**
+ * Descifra la sesión tras verificar la huella / Face ID.
+ *
+ * En modo `prf` la huella ES la llave: sin ella no hay nada legible.
+ * En modo `gate` la huella sólo es una comprobación y la clave maestra está
+ * guardada tal cual en el dispositivo — más cómodo, pero quien tenga el móvil
+ * desbloqueado puede leerla. Se elige explícitamente al activarla.
+ */
 export async function unlockWithBiometrics() {
   const store = readStore();
   if (!store?.biometric) throw new Error('No hay huella configurada');
 
-  const secret = await evaluatePrf(store.biometric.credentialId, b64.from(store.biometric.prfSalt));
-  if (!secret) throw new Error('No se pudo leer la huella');
-
-  const key = await wrappingKey(secret, b64.from(store.biometric.salt));
   let master;
-  try {
-    master = await unseal(key, store.biometric);
-  } catch {
-    throw new Error('La huella no abre esta sesión. Entra con el PIN.');
+
+  if (store.biometric.mode === 'gate') {
+    const ok = await verifyPresence(store.biometric.credentialId);
+    if (!ok) throw new Error('No se pudo verificar la huella');
+    master = b64.from(store.biometric.master);
+  } else {
+    const secret = await evaluatePrf(store.biometric.credentialId, b64.from(store.biometric.prfSalt));
+    if (!secret) throw new Error('No se pudo leer la huella');
+
+    const key = await wrappingKey(secret, b64.from(store.biometric.salt));
+    try {
+      master = await unseal(key, store.biometric);
+    } catch {
+      throw new Error('La huella no abre esta sesión. Entra con el PIN.');
+    }
   }
 
   await useMaster(master, 'biometric');
   return decodeJson(await unseal(masterKey, store.session));
+}
+
+/** Modo de la huella configurada: 'prf' (llave real), 'gate' (comprobación) o null. */
+export function biometricMode() {
+  const bio = readStore()?.biometric;
+  if (!bio) return null;
+  return bio.mode === 'gate' ? 'gate' : 'prf';
+}
+
+/** Verificación biométrica a secas, sin derivar ninguna clave. */
+async function verifyPresence(credentialId) {
+  const assertion = await navigator.credentials.get({
+    publicKey: {
+      challenge: crypto.getRandomValues(new Uint8Array(32)),
+      allowCredentials: [{ id: b64.from(credentialId), type: 'public-key' }],
+      userVerification: 'required',
+      timeout: 60_000,
+    },
+  });
+  return Boolean(assertion);
 }
 
 export function removeBiometrics() {
