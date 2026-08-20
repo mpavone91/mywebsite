@@ -1,0 +1,209 @@
+import {
+  el, esc, eur, eurSigned, pct, monthKey, monthLabel, todayISO, dayLabel, groupBy, sum, round2,
+} from '../utils.js';
+import { state, categoryById } from '../store.js';
+import {
+  monthTotals, categoryBreakdown, prevMonthPace, projection, missingRecurringIncomes,
+} from '../analysis.js';
+import { categoryDonut } from '../charts.js';
+import { openExpenseSheet, openIncomeSheet } from './add-movement.js';
+import { emptyState } from '../ui.js';
+
+/** Home: saldo de hoy, saldo del mes y los dos botones de alta rápida. */
+export function renderDashboard() {
+  const month = monthKey();
+  const today = todayISO();
+  const { expenses, incomes, categories } = state;
+
+  const t = monthTotals(month, expenses, incomes);
+  const rows = categoryBreakdown(month, expenses, categories);
+  const pace = prevMonthPace(month, expenses);
+  const proj = projection(month, expenses, incomes);
+
+  const todayExpense = round2(sum(expenses.filter((e) => e.date === today), (e) => e.amount));
+  const todayIncome = round2(sum(incomes.filter((i) => i.date === today), (i) => i.amount));
+  const todayBalance = round2(todayIncome - todayExpense);
+
+  // % del ingreso ya consumido — la barra de "cuánto llevo gastado"
+  const burn = t.income > 0 ? Math.min(t.expense / t.income, 1) : (t.expense > 0 ? 1 : 0);
+  const overspending = t.income > 0 && t.expense > t.income;
+
+  const paceDelta = pace.expense > 0 ? t.expense / pace.expense - 1 : null;
+  const paceText = paceDelta === null
+    ? 'Sin datos del mes pasado'
+    : `${paceDelta >= 0 ? '+' : '−'}${pct(Math.abs(paceDelta))} vs ${monthLabel(pace.month, { short: true })}`;
+
+  const screen = el(`
+    <div class="screen">
+      <div class="screen-head">
+        <div>
+          <h1>${monthLabel(month)}</h1>
+          <p>${dayLabel(today)} · ${t.expenseCount} ${t.expenseCount === 1 ? 'gasto' : 'gastos'} este mes</p>
+        </div>
+        <button class="btn btn-ghost" data-account aria-label="Tu cuenta"
+                style="min-height:38px;padding:0 10px;font-size:20px">⚙︎</button>
+      </div>
+
+      <div class="stack">
+        <div class="card balance-card">
+          <div class="balance-label">Gastado este mes</div>
+          <div class="balance-value num ${overspending ? 'neg' : ''}">${eur(t.expense)}</div>
+          <div class="balance-sub">
+            de ${eur(t.income)} ingresados ·
+            saldo <strong class="num ${t.balance < 0 ? 'neg' : 'pos'}">${eurSigned(t.balance)}</strong>
+          </div>
+          <div class="bar" style="margin-top:12px">
+            <i style="width:${(burn * 100).toFixed(1)}%;background:${overspending ? 'var(--neg)' : 'var(--accent)'}"></i>
+          </div>
+          <div class="row-between tiny muted" style="margin-top:6px">
+            <span>${t.income > 0 ? `${pct(t.expense / t.income)} de tus ingresos` : 'Sin ingresos registrados'}</span>
+            <span>${paceText}</span>
+          </div>
+        </div>
+
+        <div class="split">
+          <div class="card stat">
+            <div class="k">Saldo de hoy</div>
+            <div class="v num ${todayBalance < 0 ? 'neg' : todayBalance > 0 ? 'pos' : ''}">${eurSigned(todayBalance)}</div>
+            <div class="tiny muted">${eur(todayExpense)} gastado${todayIncome > 0 ? ` · ${eur(todayIncome)} ingresado` : ''}</div>
+          </div>
+          <div class="card stat">
+            <div class="k">${proj && !proj.isClosed ? 'Cierre previsto' : 'Media diaria'}</div>
+            <div class="v num">${proj ? eur(proj.isClosed ? proj.perDay : proj.projected, true) : '—'}</div>
+            <div class="tiny muted">${proj && !proj.isClosed
+              ? `a ${eur(proj.perDay)}/día · quedan ${proj.daysLeft} días`
+              : 'gasto medio por día'}</div>
+          </div>
+        </div>
+
+        <div class="quick-actions">
+          <button class="quick quick-expense" data-add-expense>
+            + Gasto
+            <small>Importe, categoría, listo</small>
+          </button>
+          <button class="quick quick-income" data-add-income>
+            + Ingreso
+            <small>Nómina y otros</small>
+          </button>
+        </div>
+
+        <div data-reminders class="stack"></div>
+
+        <div>
+          <div class="section-title">Gasto por categoría</div>
+          <div class="card" data-donut-card>
+            ${rows.length ? `
+              <div class="chart-wrap"><canvas data-donut></canvas></div>
+              <div class="legend">
+                ${rows.slice(0, 5).map((r) => `
+                  <div class="legend-item">
+                    <span class="dot" style="background:${esc(r.color)};color:${esc(r.color)}"></span>
+                    <span class="grow truncate">${esc(r.name)}</span>
+                    <span class="num">${eur(r.total)}</span>
+                    <span class="tiny muted num" style="width:44px;text-align:right">${pct(r.share)}</span>
+                  </div>`).join('')}
+                ${rows.length > 5 ? `<div class="legend-item tiny muted">+ ${rows.length - 5} categorías más</div>` : ''}
+              </div>` : emptyState('Aún no hay gastos este mes.')}
+          </div>
+        </div>
+
+        <div>
+          <div class="section-title">Últimos movimientos</div>
+          <div class="card card-flush" data-recent></div>
+        </div>
+      </div>
+    </div>
+  `);
+
+  /* --- recordatorios de ingresos recurrentes --------------------------- */
+  const reminders = screen.querySelector('[data-reminders]');
+  for (const pending of missingRecurringIncomes(month, incomes)) {
+    const card = el(`
+      <div class="card insight is-info">
+        <div class="icon">📅</div>
+        <div>
+          <h3>Falta apuntar "${esc(pending.source)}"</h3>
+          <p>El mes pasado fueron ${eur(pending.amount)}. Si ya te ha entrado, regístralo.</p>
+          <div class="action"><button class="btn btn-primary" data-add>Añadir ${eur(pending.amount)}</button></div>
+        </div>
+      </div>
+    `);
+    card.querySelector('[data-add]').addEventListener('click', () => {
+      openIncomeSheet({ prefill: { ...pending, is_recurring: true } });
+    });
+    reminders.appendChild(card);
+  }
+
+  /* --- movimientos recientes ------------------------------------------- */
+  screen.querySelector('[data-recent]').appendChild(recentMovements());
+
+  /* --- acciones --------------------------------------------------------- */
+  screen.querySelector('[data-add-expense]').addEventListener('click', () => openExpenseSheet());
+  screen.querySelector('[data-add-income]').addEventListener('click', () => openIncomeSheet());
+  screen.querySelector('[data-account]').addEventListener('click', () => {
+    document.dispatchEvent(new CustomEvent('open-account'));
+  });
+
+  // El donut necesita estar en el DOM para medir el canvas
+  if (rows.length) {
+    queueMicrotask(() => {
+      const canvas = screen.querySelector('[data-donut]');
+      if (canvas?.isConnected) categoryDonut(canvas, rows);
+    });
+  }
+
+  return screen;
+}
+
+/** Lista de los últimos movimientos, agrupados por día con su cierre diario. */
+export function recentMovements(limit = 12) {
+  const all = [
+    ...state.expenses.map((e) => ({ ...e, kind: 'expense', label: e.note })),
+    ...state.incomes.map((i) => ({ ...i, kind: 'income', label: i.source })),
+  ]
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (a.created_at < b.created_at ? 1 : -1)))
+    .slice(0, limit);
+
+  if (!all.length) {
+    return el(`<div>${emptyState('Todavía no hay movimientos. Empieza con “+ Gasto”.')}</div>`);
+  }
+
+  const wrap = el('<div class="list"></div>');
+
+  for (const [date, items] of groupBy(all, (m) => m.date)) {
+    const balance = round2(sum(items, (m) => (m.kind === 'income' ? m.amount : -m.amount)));
+    wrap.appendChild(el(`
+      <div class="day-header">
+        <span>${esc(dayLabel(date))}</span>
+        <span class="num ${balance < 0 ? 'neg' : 'pos'}">${eurSigned(balance)}</span>
+      </div>
+    `));
+
+    for (const m of items) {
+      const cat = categoryById(m.category_id);
+      const color = cat?.color || (m.kind === 'income' ? 'var(--pos)' : '#94a3b8');
+      const title = m.label || cat?.name || (m.kind === 'income' ? 'Ingreso' : 'Gasto');
+      const subtitle = cat && m.label ? cat.name : (m.is_recurring ? 'Recurrente' : '');
+
+      const row = el(`
+        <button class="list-item" type="button">
+          <span class="dot" style="background:${esc(color)};color:${esc(color)}"></span>
+          <span class="grow" style="min-width:0">
+            <span class="truncate" style="display:block;font-weight:600">${esc(title)}</span>
+            ${subtitle ? `<span class="tiny muted truncate" style="display:block">${esc(subtitle)}${m.is_recurring && subtitle !== 'Recurrente' ? ' · 🔁' : ''}</span>` : ''}
+          </span>
+          <span class="num" style="font-weight:650;color:${m.kind === 'income' ? 'var(--pos)' : 'inherit'}">
+            ${m.kind === 'income' ? '+' : '−'}${eur(m.amount)}
+          </span>
+        </button>
+      `);
+      row.addEventListener('click', () => {
+        if (m.kind === 'income') openIncomeSheet({ movement: m });
+        else openExpenseSheet({ movement: m });
+      });
+      wrap.appendChild(row);
+    }
+  }
+
+  return wrap;
+}

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Finanzas</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="description" content="Control de ingresos, gastos y análisis financiero personal.">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0d1017" media="(prefers-color-scheme: dark)">
+
+  <!-- Instalable en la pantalla de inicio del móvil -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Finanzas">
+
+  <link rel="preconnect" href="https://yovsllnpmhwvasabsmoc.supabase.co" crossorigin>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="app">
+    <div class="screen">
+      <div class="stack">
+        <div class="skeleton" style="height:118px"></div>
+        <div class="skeleton" style="height:74px"></div>
+        <div class="skeleton" style="height:210px"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toasts" aria-live="polite"></div>
+
+  <noscript>
+    <div class="screen">
+      <div class="card">Esta aplicación necesita JavaScript activado.</div>
+    </div>
+  </noscript>
+
+  <!-- Dependencias vendorizadas: se ejecutan antes que el módulo de la app -->
+  <script src="vendor/supabase-js-2.112.3.min.js"></script>
+  <script src="vendor/chart-4.5.1.umd.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
