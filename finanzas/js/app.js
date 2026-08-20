@@ -148,24 +148,33 @@ function watchAutoLock() {
   });
 }
 
+// El arranque y onAuthChange pueden coincidir: sin esta bandera síncrona los
+// dos llegarían a abrir el panel y saldría duplicado.
+let offeringLock = false;
+
 /** Ofrece configurar el acceso rápido una sola vez tras el primer login. */
 async function maybeOfferLock() {
-  if (lock.isConfigured() || localStorage.getItem(ASKED_KEY)) return;
+  if (offeringLock || lock.isConfigured() || localStorage.getItem(ASKED_KEY)) return;
   if (!window.crypto?.subtle || !window.isSecureContext) return;
 
+  offeringLock = true;
   const session = await currentSession();
-  if (!session) return;
+  if (!session) { offeringLock = false; return; }
 
   localStorage.setItem(ASKED_KEY, '1');
-  await openLockSetupSheet({
-    session,
-    user: state.user,
-    onDone: () => {
-      // A partir de aquí la sesión sólo vive cifrada
-      purgePlainSession();
-      render();
-    },
-  });
+  try {
+    await openLockSetupSheet({
+      session,
+      user: state.user,
+      onDone: () => {
+        // A partir de aquí la sesión sólo vive cifrada
+        purgePlainSession();
+        render();
+      },
+    });
+  } finally {
+    offeringLock = false;
+  }
 }
 
 /* ------------------------------------------------------------ panel cuenta --- */
