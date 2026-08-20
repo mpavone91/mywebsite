@@ -22,13 +22,18 @@ export const ACCOUNT_KINDS = [
 
 export const kindMeta = (kind) => ACCOUNT_KINDS.find((k) => k.value === kind) || ACCOUNT_KINDS[0];
 
-/** Cuentas sugeridas al empezar, para no partir de una pantalla vacía. */
+/**
+ * Cuentas sugeridas al empezar, para no partir de una pantalla vacía.
+ * A propósito son tipos y no marcas: cada uno le pone luego el nombre de su
+ * banco desde la pantalla de edición.
+ */
 export const SUGGESTED = [
-  { name: 'BBVA', kind: 'checking', color: '#0ea5e9' },
-  { name: 'Revolut', kind: 'checking', color: '#6366f1' },
-  { name: 'Trade Republic', kind: 'savings', color: '#22c55e' },
-  { name: 'SumUp', kind: 'business', color: '#f59e0b', counts_as_personal: false },
+  { name: 'Cuenta principal', kind: 'checking', color: '#4f46e5' },
+  { name: 'Segunda cuenta', kind: 'checking', color: '#0ea5e9' },
+  { name: 'Ahorro', kind: 'savings', color: '#22c55e' },
+  { name: 'Tarjeta', kind: 'card', color: '#a855f7' },
   { name: 'Efectivo', kind: 'cash', color: '#78716c' },
+  { name: 'Negocio', kind: 'business', color: '#f59e0b', counts_as_personal: false },
 ];
 
 /* ----------------------------------------------------------- pertenencia --- */

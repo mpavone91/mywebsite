@@ -245,8 +245,8 @@ export function emergencyFund(month, expenses, incomes, lookback = 3) {
  */
 export function missingRecurringIncomes(month, incomes) {
   const prev = shiftMonth(month, -1);
-  // La fuente manda: si el mes pasado entró "MOMU" y este mes ya hay un ingreso
-  // con esa fuente, no molestamos aunque se haya categorizado distinto.
+  // La fuente manda: si el mes pasado entró un ingreso con esa fuente y este mes
+  // ya hay otro igual, no molestamos aunque se haya categorizado distinto.
   const keyOf = (i) => (i.source?.trim() ? `s:${i.source.trim().toLowerCase()}` : `c:${i.category_id || ''}`);
 
   const thisMonth = new Set(incomes.filter((i) => i.date.slice(0, 7) === month).map(keyOf));

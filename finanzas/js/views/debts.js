@@ -492,7 +492,7 @@ export function openDebtSheet({ debt = null } = {}) {
         <label class="field">
           <span>Nombre</span>
           <input type="text" data-name maxlength="60" data-autofocus
-                 placeholder="Ej. Tarjeta Santander" value="${esc(debt?.name || '')}">
+                 placeholder="Ej. Tarjeta de crédito" value="${esc(debt?.name || '')}">
         </label>
 
         <label class="field">
@@ -504,7 +504,7 @@ export function openDebtSheet({ debt = null } = {}) {
 
         <label class="field">
           <span>Acreedor (opcional)</span>
-          <input type="text" data-creditor maxlength="60" placeholder="Ej. BBVA, mi hermano…"
+          <input type="text" data-creditor maxlength="60" placeholder="Ej. tu banco, un familiar…"
                  value="${esc(debt?.creditor || '')}">
         </label>
 
