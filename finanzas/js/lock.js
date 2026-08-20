@@ -204,6 +204,8 @@ export async function enableBiometrics({ userId, userName }) {
   if (!store?.pin) throw new Error('Configura antes un PIN de respaldo');
   if (!masterBytes) throw new Error('Desbloquea con tu PIN antes de añadir la huella');
 
+  const prfSalt = crypto.getRandomValues(new Uint8Array(32));
+
   const credential = await navigator.credentials.create({
     publicKey: {
       challenge: crypto.getRandomValues(new Uint8Array(32)),
@@ -217,26 +219,37 @@ export async function enableBiometrics({ userId, userName }) {
       authenticatorSelection: {
         authenticatorAttachment: 'platform',
         userVerification: 'required',
-        residentKey: 'preferred',
+        // Android (Google Password Manager) sólo evalúa PRF sobre credenciales
+        // detectables, así que aquí no vale con "preferred"
+        residentKey: 'required',
+        requireResidentKey: true,
       },
       timeout: 60_000,
       attestation: 'none',
-      extensions: { prf: {} },
+      // Pedimos ya la evaluación en el propio registro: Chrome en Android la
+      // devuelve aquí y nos ahorramos una segunda verificación biométrica.
+      extensions: { prf: { eval: { first: prfSalt } } },
     },
   });
 
   if (!credential) throw new Error('No se pudo registrar la huella');
-  if (credential.getClientExtensionResults()?.prf?.enabled === false) {
+
+  const created = credential.getClientExtensionResults()?.prf;
+  if (created?.enabled === false) {
     throw new Error('Este dispositivo no puede derivar una clave de la huella. Sigue usando el PIN.');
   }
 
   const credentialId = b64.to(credential.rawId);
-  const prfSalt = crypto.getRandomValues(new Uint8Array(32));
 
-  // El secreto PRF sólo se obtiene en una verificación, así que pedimos una
-  // inmediatamente después de registrar.
-  const secret = await evaluatePrf(credentialId, prfSalt);
-  if (!secret) throw new Error('Este dispositivo no devolvió una clave para la huella. Sigue usando el PIN.');
+  // Si el registro no trajo el secreto (Safari y algún Android lo dan sólo al
+  // verificar), lo pedimos con una verificación inmediata.
+  const secret = created?.results?.first
+    ? new Uint8Array(created.results.first)
+    : await evaluatePrf(credentialId, prfSalt);
+
+  if (!secret) {
+    throw new Error('Este dispositivo no devolvió una clave para la huella. Sigue usando el PIN — si quieres, borra la clave de acceso que se acaba de crear desde el gestor de contraseñas.');
+  }
 
   // Envolvemos la MISMA clave maestra con la clave derivada de la huella
   const salt = crypto.getRandomValues(new Uint8Array(16));
