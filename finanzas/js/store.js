@@ -19,6 +19,8 @@ export const state = {
   categories: [],
   expenses: [],
   incomes: [],
+  debts: [],
+  debtPayments: [],   // se cargan todos: son pocos y hacen falta para el saldo
   loadedFrom: null,   // fecha ISO más antigua cargada
   ready: false,
 };
@@ -68,19 +70,58 @@ export async function updatePassword(password) {
   if (error) throw error;
 }
 
-export async function signOut() {
-  await supabase.auth.signOut();
+/** Restaura una sesión descifrada por el bloqueo (PIN o huella). */
+export async function restoreSession({ access_token, refresh_token }) {
+  const { data, error } = await supabase.auth.setSession({ access_token, refresh_token });
+  if (error) throw error;
+  state.user = data.session?.user ?? null;
+  return data.session;
+}
+
+export async function currentSession() {
+  const { data } = await supabase.auth.getSession();
+  return data.session;
+}
+
+function clearState() {
   state.categories = [];
   state.expenses = [];
   state.incomes = [];
+  state.debts = [];
+  state.debtPayments = [];
   state.loadedFrom = null;
   state.ready = false;
+}
+
+export async function signOut() {
+  await supabase.auth.signOut();
+  clearState();
+}
+
+/**
+ * Cierre de sesión SÓLO local: se olvida la sesión en este dispositivo pero no
+ * se revoca el token en el servidor. Es lo que usa el bloqueo automático, para
+ * que el token cifrado siga sirviendo al volver a desbloquear.
+ */
+export async function lockSession() {
+  await supabase.auth.signOut({ scope: 'local' });
+  clearState();
 }
 
 /* ----------------------------------------------------------------- carga --- */
 
 function normalize(row) {
   return { ...row, amount: Number(row.amount) };
+}
+
+// Postgres devuelve los numeric como texto; los pasamos a número una sola vez
+function normalizeDebt(row) {
+  return {
+    ...row,
+    initial_amount: Number(row.initial_amount),
+    annual_rate: Number(row.annual_rate),
+    minimum_payment: Number(row.minimum_payment),
+  };
 }
 
 async function fetchRange(table, from, to) {
@@ -94,16 +135,23 @@ async function fetchRange(table, from, to) {
 export async function loadAll() {
   const from = `${shiftMonth(monthKey(), -(WINDOW_MONTHS - 1))}-01`;
 
-  const [cats, expenses, incomes] = await Promise.all([
+  const [cats, expenses, incomes, debts, debtPayments] = await Promise.all([
     supabase.from('categories').select('*').order('type').order('name'),
     fetchRange('expenses', from),
     fetchRange('incomes', from),
+    supabase.from('debts').select('*').order('created_at'),
+    // Sin ventana temporal: el saldo pendiente sale de la suma de TODOS los pagos
+    supabase.from('debt_payments').select('*').order('date', { ascending: false }),
   ]);
   if (cats.error) throw cats.error;
+  if (debts.error) throw debts.error;
+  if (debtPayments.error) throw debtPayments.error;
 
   state.categories = cats.data;
   state.expenses = expenses;
   state.incomes = incomes;
+  state.debts = debts.data.map(normalizeDebt);
+  state.debtPayments = debtPayments.data.map(normalize);
   state.loadedFrom = from;
   state.ready = true;
 
@@ -232,6 +280,105 @@ export async function deleteCategory(id) {
   state.categories = state.categories.filter((c) => c.id !== id);
   emit();
   return null;
+}
+
+/* ----------------------------------------------------------------- deudas --- */
+
+export async function addDebt(payload) {
+  const { data, error } = await supabase.from('debts').insert(cleanDebt(payload)).select().single();
+  if (error) throw error;
+  state.debts = [...state.debts, normalizeDebt(data)];
+  emit();
+  return data;
+}
+
+export async function updateDebt(id, patch) {
+  const { data, error } = await supabase.from('debts').update(cleanDebt(patch)).eq('id', id).select().single();
+  if (error) throw error;
+  state.debts = state.debts.map((d) => (d.id === id ? normalizeDebt(data) : d));
+  emit();
+  return data;
+}
+
+/**
+ * Borra una deuda y sus pagos (cascade en la FK). Los gastos asociados a esos
+ * pagos NO se borran: ya salieron de tu bolsillo y el cierre del mes tiene que
+ * seguir cuadrando.
+ */
+export async function deleteDebt(id) {
+  const { error } = await supabase.from('debts').delete().eq('id', id);
+  if (error) throw error;
+  state.debts = state.debts.filter((d) => d.id !== id);
+  state.debtPayments = state.debtPayments.filter((p) => p.debt_id !== id);
+  emit();
+}
+
+function cleanDebt(p) {
+  const out = { ...p };
+  if (out.initial_amount !== undefined) out.initial_amount = round2(out.initial_amount);
+  if (out.minimum_payment !== undefined) out.minimum_payment = round2(out.minimum_payment || 0);
+  if (out.annual_rate !== undefined) out.annual_rate = Number(out.annual_rate) || 0;
+  if (out.due_day !== undefined) out.due_day = out.due_day || null;
+  if (out.name !== undefined) out.name = out.name.trim();
+  if (out.creditor !== undefined) out.creditor = out.creditor?.trim() || null;
+  if (out.note !== undefined) out.note = out.note?.trim() || null;
+  return out;
+}
+
+/**
+ * Registra un pago. Por defecto crea también el gasto correspondiente, para
+ * que el pago cuente en el saldo del mes; si el gasto ya estaba apuntado a
+ * mano, se puede desactivar con `createExpense: false`.
+ */
+export async function addDebtPayment({ debt_id, amount, date, note, createExpense = true }) {
+  const debt = state.debts.find((d) => d.id === debt_id);
+  const value = round2(amount);
+  let expense = null;
+
+  if (createExpense) {
+    const categoryId = debt?.category_id
+      || categoriesOf('expense').find((c) => /deuda/i.test(c.name))?.id
+      || null;
+    expense = await addExpense({
+      amount: value,
+      category_id: categoryId,
+      note: `Pago ${debt?.name || 'deuda'}`,
+      date: date || todayISO(),
+      is_recurring: false,
+    });
+  }
+
+  const payload = {
+    debt_id,
+    amount: value,
+    date: date || todayISO(),
+    note: note?.trim() || null,
+    expense_id: expense?.id || null,
+  };
+
+  const { data, error } = await supabase.from('debt_payments').insert(payload).select().single();
+  if (error) {
+    // No dejamos el gasto huérfano si el pago no llegó a grabarse
+    if (expense) await deleteMovement('expense', expense.id).catch(() => {});
+    throw error;
+  }
+
+  state.debtPayments = [normalize(data), ...state.debtPayments];
+  emit();
+  return data;
+}
+
+/** Borra un pago y, si lo generó, el gasto asociado. */
+export async function deleteDebtPayment(id) {
+  const payment = state.debtPayments.find((p) => p.id === id);
+  const { error } = await supabase.from('debt_payments').delete().eq('id', id);
+  if (error) throw error;
+
+  state.debtPayments = state.debtPayments.filter((p) => p.id !== id);
+  if (payment?.expense_id) {
+    await deleteMovement('expense', payment.expense_id).catch(() => {});
+  }
+  emit();
 }
 
 function sortCategories(a, b) {

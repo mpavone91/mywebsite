@@ -7,6 +7,8 @@ import {
 } from '../analysis.js';
 import { categoryDonut } from '../charts.js';
 import { openExpenseSheet, openIncomeSheet } from './add-movement.js';
+import { openPaymentSheet } from './debts.js';
+import { debtsOverview, daysUntil, simulatePayoff } from '../debts.js';
 import { emptyState } from '../ui.js';
 
 /** Home: saldo de hoy, saldo del mes y los dos botones de alta rápida. */
@@ -87,6 +89,7 @@ export function renderDashboard() {
           </button>
         </div>
 
+        <div data-debt-strip></div>
         <div data-reminders class="stack"></div>
 
         <div>
@@ -115,8 +118,54 @@ export function renderDashboard() {
     </div>
   `);
 
-  /* --- recordatorios de ingresos recurrentes --------------------------- */
+  /* --- recordatorios ---------------------------------------------------- */
   const reminders = screen.querySelector('[data-reminders]');
+
+  const debts = debtsOverview(state.debts, state.debtPayments);
+
+  // Resumen de deuda siempre a la vista, con la fecha de salida al ritmo actual
+  if (debts.active.length) {
+    const plan = simulatePayoff(debts.active, { extra: 0 });
+    const strip = el(`
+      <a href="#/deudas" class="card row-between" style="text-decoration:none;color:inherit;padding:14px 16px">
+        <span class="grow" style="min-width:0">
+          <span class="tiny muted" style="display:block">Deuda pendiente</span>
+          <span class="num" style="font-weight:700;font-size:18px">${eur(debts.balance)}</span>
+        </span>
+        <span style="text-align:right">
+          <span class="tiny muted" style="display:block">${plan.stalls ? 'Con los mínimos' : 'Libre en'}</span>
+          <span class="small" style="font-weight:600">${plan.stalls ? 'no baja' : monthLabel(plan.payoffMonth)}</span>
+        </span>
+        <span class="muted" style="margin-left:8px">›</span>
+      </a>
+    `);
+    screen.querySelector('[data-debt-strip]').appendChild(strip);
+  }
+
+  // Deudas que vencen en los próximos días (o que ya se han pasado)
+  for (const debt of debts.active) {
+    const days = daysUntil(debt.nextDueDate);
+    if (days === null || days > 5) continue;
+
+    const late = days < 0;
+    const when = late ? `venció hace ${Math.abs(days)} ${Math.abs(days) === 1 ? 'día' : 'días'}`
+      : days === 0 ? 'vence hoy'
+        : days === 1 ? 'vence mañana'
+          : `vence en ${days} días`;
+
+    const card = el(`
+      <div class="card insight ${late ? 'is-alert' : 'is-warn'}">
+        <div class="icon">${late ? '⚠️' : '📌'}</div>
+        <div>
+          <h3>${esc(debt.name)}: la cuota ${when}</h3>
+          <p>${debt.minimum_payment > 0 ? `${eur(debt.minimum_payment)} de cuota. ` : ''}Te quedan ${eur(debt.balance)} por pagar.</p>
+          <div class="action"><button class="btn btn-primary" data-pay>Registrar pago</button></div>
+        </div>
+      </div>
+    `);
+    card.querySelector('[data-pay]').addEventListener('click', () => openPaymentSheet(debt.id));
+    reminders.appendChild(card);
+  }
   for (const pending of missingRecurringIncomes(month, incomes)) {
     const card = el(`
       <div class="card insight is-info">

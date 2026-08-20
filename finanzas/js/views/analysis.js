@@ -1,6 +1,7 @@
 import { el, esc, eur, pct, monthKey, monthLabel, daysInMonth, elapsedDays, round2 } from '../utils.js';
 import { state } from '../store.js';
 import { analyzeMonth } from '../analysis.js';
+import { debtInsights } from '../debts.js';
 import { RULES } from '../config.js';
 import { incomeVsExpenseBars, cumulativeSpendLine } from '../charts.js';
 import { emptyState } from '../ui.js';
@@ -41,8 +42,21 @@ export function renderAnalysis() {
     </div>
   `);
 
+  // Las tarjetas de deuda se calculan aparte (debts.js) y se mezclan aquí,
+  // ordenadas otra vez por gravedad para que lo urgente quede arriba del todo.
+  const rank = { alert: 0, warn: 1, good: 2, info: 3 };
+  const insights = [
+    ...a.insights,
+    ...debtInsights(state.debts, state.debtPayments, {
+      expenses: state.expenses, incomes: state.incomes, month,
+    }),
+  ]
+    .map((insight, i) => ({ insight, i }))
+    .sort((x, y) => (rank[x.insight.level] - rank[y.insight.level]) || (x.i - y.i))
+    .map(({ insight }) => insight);
+
   const list = screen.querySelector('[data-insights]');
-  for (const insight of a.insights) list.appendChild(insightCard(insight));
+  for (const insight of insights) list.appendChild(insightCard(insight));
 
   if (a.totals.hasData) screen.querySelector('[data-extra]').appendChild(analysisDetail(a));
 
