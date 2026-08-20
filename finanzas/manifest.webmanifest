@@ -1,0 +1,32 @@
+{
+  "name": "Finanzas Personales",
+  "short_name": "Finanzas",
+  "description": "Control de ingresos, gastos y análisis financiero personal.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f5f7",
+  "theme_color": "#4f46e5",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Añadir gasto",
+      "short_name": "+ Gasto",
+      "url": "./#/gasto"
+    },
+    {
+      "name": "Añadir ingreso",
+      "short_name": "+ Ingreso",
+      "url": "./#/ingreso"
+    }
+  ]
+}
