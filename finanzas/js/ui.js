@@ -1,4 +1,4 @@
-import { el, esc } from './utils.js';
+import { el, esc, eur, haptic } from './utils.js';
 
 /* ------------------------------------------------------------- bottom sheet --- */
 
@@ -85,4 +85,65 @@ export function skeletonScreen() {
 
 export function emptyState(message) {
   return `<div class="empty">${esc(message)}</div>`;
+}
+
+/* ---------------------------------------------------------------- teclado --- */
+
+export function amountKeypad(initialCents = 0) {
+  const node = el(`
+    <div>
+      <div class="amount-display">
+        <div class="val num" data-val>0,00 €</div>
+        <div class="hint" data-hint>Teclea el importe</div>
+      </div>
+      <div class="keypad">
+        ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<button type="button" data-k="${n}">${n}</button>`).join('')}
+        <button type="button" data-k="00">00</button>
+        <button type="button" data-k="0">0</button>
+        <button type="button" data-k="del" aria-label="Borrar">⌫</button>
+      </div>
+    </div>
+  `);
+
+  let cents = initialCents;
+  const listeners = [];
+  const valEl = node.querySelector('[data-val]');
+
+  function paint() {
+    valEl.textContent = eur(cents / 100);
+    valEl.classList.toggle('muted', cents === 0);
+    listeners.forEach((fn) => fn(cents / 100));
+  }
+
+  node.querySelectorAll('[data-k]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const k = btn.dataset.k;
+      if (k === 'del') cents = Math.floor(cents / 10);
+      else if (cents < 1e9) cents = cents * (k === '00' ? 100 : 10) + Number(k);
+      haptic(8);
+      paint();
+    });
+  });
+
+  // También se puede teclear con un teclado físico, salvo cuando el foco está
+  // en un campo de texto (nota, fuente…): allí los dígitos son del campo.
+  const onKey = (e) => {
+    const tag = e.target?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (e.key >= '0' && e.key <= '9') { cents = cents * 10 + Number(e.key); paint(); }
+    else if (e.key === 'Backspace') { cents = Math.floor(cents / 10); paint(); }
+    else return;
+    e.preventDefault();
+  };
+  document.addEventListener('keydown', onKey);
+
+  paint();
+
+  return {
+    node,
+    get value() { return cents / 100; },
+    onChange(fn) { listeners.push(fn); fn(cents / 100); },
+    setHint(text) { node.querySelector('[data-hint]').textContent = text; },
+    dispose() { document.removeEventListener('keydown', onKey); },
+  };
 }

@@ -1,7 +1,7 @@
 import {
   el, esc, eur, eurSigned, pct, monthKey, monthLabel, shiftMonth, groupBy, sum, round2, dayLabel, toast,
 } from '../utils.js';
-import { state, ensureMonth, categoryById } from '../store.js';
+import { state, personalData, ensureMonth, categoryById } from '../store.js';
 import { analyzeMonth } from '../analysis.js';
 import { insightCard } from './analysis.js';
 import { emptyState } from '../ui.js';
@@ -69,7 +69,7 @@ export function renderHistory(initialMonth = selectedMonth || shiftMonth(monthKe
 
 /** Desglose completo de un mes: totales, categorías, insights y movimientos. */
 export function monthReport(month, { onChange } = {}) {
-  const a = analyzeMonth(month, state);
+  const a = analyzeMonth(month, personalData());
   const { totals: t, previous: prev, byCategory } = a;
 
   if (!t.hasData) {

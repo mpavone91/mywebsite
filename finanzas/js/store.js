@@ -1,5 +1,6 @@
 import { supabase } from './supabase.js';
 import { monthKey, shiftMonth, monthRange, todayISO, round2 } from './utils.js';
+import { isPersonal } from './accounts.js';
 
 /**
  * Estado en memoria de la app.
@@ -21,6 +22,8 @@ export const state = {
   incomes: [],
   debts: [],
   debtPayments: [],   // se cargan todos: son pocos y hacen falta para el saldo
+  accounts: [],
+  transfers: [],
   loadedFrom: null,   // fecha ISO más antigua cargada
   ready: false,
 };
@@ -89,6 +92,8 @@ function clearState() {
   state.incomes = [];
   state.debts = [];
   state.debtPayments = [];
+  state.accounts = [];
+  state.transfers = [];
   state.loadedFrom = null;
   state.ready = false;
 }
@@ -124,6 +129,10 @@ function normalizeDebt(row) {
   };
 }
 
+function normalizeAccount(row) {
+  return { ...row, opening_balance: Number(row.opening_balance) };
+}
+
 async function fetchRange(table, from, to) {
   let q = supabase.from(table).select('*').gte('date', from).order('date', { ascending: false });
   if (to) q = q.lte('date', to);
@@ -135,23 +144,30 @@ async function fetchRange(table, from, to) {
 export async function loadAll() {
   const from = `${shiftMonth(monthKey(), -(WINDOW_MONTHS - 1))}-01`;
 
-  const [cats, expenses, incomes, debts, debtPayments] = await Promise.all([
+  const [cats, expenses, incomes, debts, debtPayments, accounts, transfers] = await Promise.all([
     supabase.from('categories').select('*').order('type').order('name'),
     fetchRange('expenses', from),
     fetchRange('incomes', from),
     supabase.from('debts').select('*').order('created_at'),
     // Sin ventana temporal: el saldo pendiente sale de la suma de TODOS los pagos
     supabase.from('debt_payments').select('*').order('date', { ascending: false }),
+    supabase.from('accounts').select('*').order('created_at'),
+    // Igual que los pagos: el saldo de cada cuenta necesita el histórico entero
+    supabase.from('transfers').select('*').order('date', { ascending: false }),
   ]);
   if (cats.error) throw cats.error;
   if (debts.error) throw debts.error;
   if (debtPayments.error) throw debtPayments.error;
+  if (accounts.error) throw accounts.error;
+  if (transfers.error) throw transfers.error;
 
   state.categories = cats.data;
   state.expenses = expenses;
   state.incomes = incomes;
   state.debts = debts.data.map(normalizeDebt);
   state.debtPayments = debtPayments.data.map(normalize);
+  state.accounts = accounts.data.map(normalizeAccount);
+  state.transfers = transfers.data.map(normalize);
   state.loadedFrom = from;
   state.ready = true;
 
@@ -194,10 +210,11 @@ export async function ensureMonth(key) {
 
 const byDateDesc = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (a.created_at < b.created_at ? 1 : -1));
 
-export async function addExpense({ amount, category_id, note, date, is_recurring }) {
+export async function addExpense({ amount, category_id, account_id, note, date, is_recurring }) {
   const payload = {
     amount: round2(amount),
     category_id: category_id || null,
+    account_id: account_id || null,
     note: note?.trim() || null,
     date: date || todayISO(),
     is_recurring: Boolean(is_recurring),
@@ -209,10 +226,11 @@ export async function addExpense({ amount, category_id, note, date, is_recurring
   return data;
 }
 
-export async function addIncome({ amount, category_id, source, date, is_recurring }) {
+export async function addIncome({ amount, category_id, account_id, source, date, is_recurring }) {
   const payload = {
     amount: round2(amount),
     category_id: category_id || null,
+    account_id: account_id || null,
     source: source?.trim() || null,
     date: date || todayISO(),
     is_recurring: Boolean(is_recurring),
@@ -282,6 +300,95 @@ export async function deleteCategory(id) {
   return null;
 }
 
+/* ---------------------------------------------------------------- cuentas --- */
+
+export async function addAccount(payload) {
+  const { data, error } = await supabase.from('accounts').insert(cleanAccount(payload)).select().single();
+  if (error) throw error;
+  state.accounts = [...state.accounts, normalizeAccount(data)];
+  emit();
+  return data;
+}
+
+export async function updateAccount(id, patch) {
+  const { data, error } = await supabase.from('accounts').update(cleanAccount(patch)).eq('id', id).select().single();
+  if (error) throw error;
+  state.accounts = state.accounts.map((a) => (a.id === id ? normalizeAccount(data) : a));
+  emit();
+  return data;
+}
+
+/**
+ * Borra una cuenta si no se ha usado; si tiene movimientos la archiva, para no
+ * dejar el histórico sin saber de dónde salió cada euro.
+ */
+export async function deleteAccount(id) {
+  const used = state.expenses.some((e) => e.account_id === id)
+    || state.incomes.some((i) => i.account_id === id)
+    || state.transfers.some((t) => t.from_account_id === id || t.to_account_id === id);
+
+  if (used) return updateAccount(id, { is_archived: true });
+
+  const { error } = await supabase.from('accounts').delete().eq('id', id);
+  if (error) throw error;
+  state.accounts = state.accounts.filter((a) => a.id !== id);
+  emit();
+  return null;
+}
+
+function cleanAccount(p) {
+  const out = { ...p };
+  if (out.name !== undefined) out.name = out.name.trim();
+  if (out.opening_balance !== undefined) out.opening_balance = round2(out.opening_balance || 0);
+  if (out.note !== undefined) out.note = out.note?.trim() || null;
+  return out;
+}
+
+/* -------------------------------------------------------------- traspasos --- */
+
+export async function addTransfer({ from_account_id, to_account_id, amount, date, note }) {
+  if (from_account_id === to_account_id) throw new Error('Elige dos cuentas distintas');
+
+  const payload = {
+    from_account_id,
+    to_account_id,
+    amount: round2(amount),
+    date: date || todayISO(),
+    note: note?.trim() || null,
+  };
+  const { data, error } = await supabase.from('transfers').insert(payload).select().single();
+  if (error) throw error;
+  state.transfers = [normalize(data), ...state.transfers].sort(byDateDesc);
+  emit();
+  return data;
+}
+
+export async function deleteTransfer(id) {
+  const { error } = await supabase.from('transfers').delete().eq('id', id);
+  if (error) throw error;
+  state.transfers = state.transfers.filter((t) => t.id !== id);
+  emit();
+}
+
+export function accountsList({ includeArchived = false } = {}) {
+  return state.accounts.filter((a) => includeArchived || !a.is_archived);
+}
+
+export const accountById = (id) => state.accounts.find((a) => a.id === id) || null;
+
+/**
+ * Movimientos que sí salen de tu bolsillo. Es lo que se pasa al motor de
+ * análisis: el dinero del negocio no puede ensuciar tu tasa de ahorro.
+ */
+export function personalData() {
+  const personal = (row) => isPersonal(row.account_id, state.accounts);
+  return {
+    categories: state.categories,
+    expenses: state.expenses.filter(personal),
+    incomes: state.incomes.filter(personal),
+  };
+}
+
 /* ----------------------------------------------------------------- deudas --- */
 
 export async function addDebt(payload) {
@@ -330,7 +437,7 @@ function cleanDebt(p) {
  * que el pago cuente en el saldo del mes; si el gasto ya estaba apuntado a
  * mano, se puede desactivar con `createExpense: false`.
  */
-export async function addDebtPayment({ debt_id, amount, date, note, createExpense = true }) {
+export async function addDebtPayment({ debt_id, amount, date, note, account_id, createExpense = true }) {
   const debt = state.debts.find((d) => d.id === debt_id);
   const value = round2(amount);
   let expense = null;
@@ -342,6 +449,7 @@ export async function addDebtPayment({ debt_id, amount, date, note, createExpens
     expense = await addExpense({
       amount: value,
       category_id: categoryId,
+      account_id: account_id || null,
       note: `Pago ${debt?.name || 'deuda'}`,
       date: date || todayISO(),
       is_recurring: false,

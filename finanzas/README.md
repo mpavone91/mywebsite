@@ -33,8 +33,9 @@ Las migraciones están en `supabase/migrations/` y se aplican en orden:
 | `0003_seed_categories.sql` | Categorías por defecto al crear un usuario (trigger sobre `auth.users`) |
 | `0004_harden_functions.sql` | Revoca el `EXECUTE` público de las funciones `SECURITY DEFINER` e indexa las FK |
 | `0005_debts.sql` | Deudas y sus pagos + vista `debt_status` con el saldo pendiente |
+| `0006_accounts.sql` | Cuentas (bancos), traspasos, `account_id` en gastos e ingresos + vista `account_balances` |
 
-Para recrear el proyecto desde cero, ejecuta los cinco archivos por orden en el SQL Editor
+Para recrear el proyecto desde cero, ejecuta los seis archivos por orden en el SQL Editor
 de Supabase y cambia `SUPABASE_URL` / `SUPABASE_KEY` en `js/config.js`.
 
 ### 2. Crear tu usuario
@@ -85,13 +86,20 @@ expenses      (id, user_id, amount, category_id, note,   date, is_recurring, cre
 debts         (id, user_id, name, creditor, kind, initial_amount, annual_rate,
                minimum_payment, due_day, start_date, category_id, note, closed_at)
 debt_payments (id, user_id, debt_id, amount, date, expense_id, note, created_at)
+accounts      (id, user_id, name, kind, color, opening_balance, counts_as_personal,
+               is_default, is_archived, note, created_at)
+transfers     (id, user_id, from_account_id, to_account_id, amount, date, note, created_at)
 ```
+
+`expenses` e `incomes` llevan además un `account_id` opcional. Nulo significa "sin asignar"
+y cuenta como personal, así que todo lo registrado antes de que existieran las cuentas sigue
+siendo válido.
 
 `type` es `'income' | 'expense'`. `bucket` es `'needs' | 'wants' | 'savings'` y es lo que
 alimenta la regla 50/30/20: cada categoría de gasto cuenta como necesidad o deseo según
 cómo esté marcada, y se puede cambiar desde la pantalla *Categorías*.
 
-RLS activo en las cinco tablas con `user_id = (select auth.uid())`, tanto en `USING` como en
+RLS activo en las siete tablas con `user_id = (select auth.uid())`, tanto en `USING` como en
 `WITH CHECK`. Las vistas se crearon con `security_invoker = on`, así que respetan el RLS de
 las tablas base en lugar de saltárselo.
 
@@ -151,6 +159,38 @@ La lógica está en `js/debts.js`, también en funciones puras.
 
 Estas tarjetas también aparecen mezcladas en la pantalla de Análisis, ordenadas por gravedad
 junto al resto.
+
+---
+
+## Cuentas y bancos
+
+Cada gasto e ingreso puede decir de qué cuenta sale o a cuál entra. La lógica está en
+`js/accounts.js`. Tres reglas la sostienen:
+
+**Un traspaso no es ni gasto ni ingreso.** Mover dinero de BBVA a Revolut cambia dónde está,
+no cuánto tienes. Por eso los traspasos viven en su propia tabla y no entran en ningún total
+del mes: si contaran, salir de la nómina y apartar para ahorro parecería un gasto enorme.
+
+**Una cuenta puede no ser tuya.** Marcándola como *negocio* (`counts_as_personal = false`)
+queda fuera de tus totales personales. Es el caso de SumUp: lo que pagas con el dinero del
+local no sale de tu bolsillo, así que no ensucia tu tasa de ahorro ni tu gasto del mes.
+
+**Lo que gastas del negocio queda como pendiente.** El pendiente se calcula solo:
+
+```
+pendiente = gastos pagados desde la cuenta de negocio
+          − traspasos que le has hecho desde tus cuentas personales
+```
+
+Cuando le devuelves el dinero al negocio, lo registras como un traspaso desde tu cuenta y el
+pendiente baja. No cuenta como gasto del mes porque ese gasto ya se registró aparte cuando lo
+hiciste; lo que baja es el saldo de la cuenta desde la que pagas.
+
+El saldo de cada cuenta es `saldo inicial + ingresos − gastos + traspasos recibidos −
+traspasos enviados`. Las cuentas de tipo *ahorro* se muestran aparte del disponible, para que
+el dinero apartado no se confunda con el que puedes gastar.
+
+Las cuentas con movimientos no se borran: se archivan, igual que las categorías.
 
 ---
 

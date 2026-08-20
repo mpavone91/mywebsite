@@ -12,6 +12,7 @@ import { renderAnalysis } from './views/analysis.js';
 import { renderHistory } from './views/history.js';
 import { renderCategories } from './views/categories.js';
 import { renderDebts } from './views/debts.js';
+import { renderAccounts } from './views/accounts.js';
 import { renderAuth, accountSheetContent } from './views/auth.js';
 import { renderLockScreen, openLockSetupSheet, lockSettings } from './views/lock.js';
 import { openExpenseSheet, openIncomeSheet } from './views/add-movement.js';
@@ -26,6 +27,7 @@ const ASKED_KEY = 'finanzas.lock.asked';
 
 const ROUTES = {
   '/': { title: 'Hoy', render: renderDashboard },
+  '/cuentas': { title: 'Cuentas', render: renderAccounts },
   '/deudas': { title: 'Deudas', render: renderDebts },
   '/analisis': { title: 'Análisis', render: renderAnalysis },
   '/historico': { title: 'Histórico', render: renderHistory },
@@ -41,6 +43,7 @@ const SHORTCUTS = {
 
 const ICONS = {
   '/': '<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5"/>',
+  '/cuentas': '<path d="M3 21h18M4 21V10l8-6 8 6v11M9 21v-6h6v6"/>',
   '/deudas': '<path d="M3 7h18v11H3zM3 11h18M7 15h3"/>',
   '/analisis': '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   '/historico': '<path d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 7v5l3 2"/>',
@@ -104,10 +107,10 @@ function navBar(active) {
   return el(`
     <nav class="nav">
       ${item('/', 'Hoy')}
+      ${item('/cuentas', 'Cuentas')}
       ${item('/deudas', 'Deudas')}
       ${item('/analisis', 'Análisis')}
       ${item('/historico', 'Histórico')}
-      ${item('/categorias', 'Categorías')}
     </nav>
   `);
 }
@@ -188,6 +191,15 @@ function openAccountSheet() {
       history.replaceState(null, '', '#/');
       render();
     });
+
+    // Categorías salió de la barra al entrar Cuentas: se gestionan de aquí,
+    // que es donde uno va cuando quiere configurar algo.
+    const toCategories = el('<button class="btn btn-block" data-categories>Gestionar categorías</button>');
+    toCategories.addEventListener('click', () => {
+      close(true);
+      location.hash = '/categorias';
+    });
+    content.prepend(toCategories);
 
     currentSession().then((session) => {
       if (!session) return;

@@ -4,8 +4,8 @@ import {
   debtsOverview, debtStatus, simulatePayoff, comparePlans, monthlyCapacity,
   extraOptions, daysUntil, DEBT_KINDS, kindLabel,
 } from '../debts.js';
-import { openSheet, confirmSheet, emptyState } from '../ui.js';
-import { amountKeypad } from './add-movement.js';
+import { openSheet, confirmSheet, emptyState, amountKeypad } from '../ui.js';
+import { accountChips, rememberedAccount } from './accounts.js';
 
 /* ================================================================ pantalla === */
 
@@ -395,6 +395,8 @@ export function openPaymentSheet(debtId) {
   return openSheet(`Pago · ${debt.name}`, (close) => {
     keypad = amountKeypad(debt.minimum_payment > 0 ? Math.round(debt.minimum_payment * 100) : 0);
 
+    const accounts = accountChips(rememberedAccount('expense'));
+
     const body = el(`
       <div class="stack">
         <div data-keypad></div>
@@ -402,6 +404,10 @@ export function openPaymentSheet(debtId) {
           Pendiente ahora: <strong class="num">${eur(debt.balance)}</strong>
           ${debt.minimum_payment > 0 ? ` · cuota mínima ${eur(debt.minimum_payment)}` : ''}
         </p>
+        <div data-accounts-block hidden>
+          <div class="section-title">Pagado desde</div>
+          <div data-accounts></div>
+        </div>
         <label class="field">
           <span>Fecha</span>
           <input type="date" data-date value="${todayISO()}">
@@ -422,6 +428,10 @@ export function openPaymentSheet(debtId) {
     `);
 
     body.querySelector('[data-keypad]').appendChild(keypad.node);
+    if (accounts) {
+      body.querySelector('[data-accounts]').appendChild(accounts.node);
+      body.querySelector('[data-accounts-block]').hidden = false;
+    }
 
     const saveBtn = body.querySelector('[data-save]');
     keypad.onChange((amount) => {
@@ -450,6 +460,7 @@ export function openPaymentSheet(debtId) {
           amount,
           date: body.querySelector('[data-date]').value || todayISO(),
           note: body.querySelector('[data-note]').value,
+          account_id: accounts?.value ?? null,
           createExpense: body.querySelector('[data-expense]').checked,
         });
         haptic(18);
