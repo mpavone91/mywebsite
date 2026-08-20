@@ -32,8 +32,9 @@ Las migraciones están en `supabase/migrations/` y se aplican en orden:
 | `0002_views.sql` | Vistas `movements`, `daily_balance`, `monthly_summary`, `monthly_category_summary` |
 | `0003_seed_categories.sql` | Categorías por defecto al crear un usuario (trigger sobre `auth.users`) |
 | `0004_harden_functions.sql` | Revoca el `EXECUTE` público de las funciones `SECURITY DEFINER` e indexa las FK |
+| `0005_debts.sql` | Deudas y sus pagos + vista `debt_status` con el saldo pendiente |
 
-Para recrear el proyecto desde cero, ejecuta los cuatro archivos por orden en el SQL Editor
+Para recrear el proyecto desde cero, ejecuta los cinco archivos por orden en el SQL Editor
 de Supabase y cambia `SUPABASE_URL` / `SUPABASE_KEY` en `js/config.js`.
 
 ### 2. Crear tu usuario
@@ -78,21 +79,29 @@ con el formulario ya desplegado.
 ## Modelo de datos
 
 ```
-categories (id, user_id, name, type, color, bucket, is_archived, created_at)
-incomes    (id, user_id, amount, category_id, source, date, is_recurring, created_at)
-expenses   (id, user_id, amount, category_id, note,   date, is_recurring, created_at)
+categories    (id, user_id, name, type, color, bucket, is_archived, created_at)
+incomes       (id, user_id, amount, category_id, source, date, is_recurring, created_at)
+expenses      (id, user_id, amount, category_id, note,   date, is_recurring, created_at)
+debts         (id, user_id, name, creditor, kind, initial_amount, annual_rate,
+               minimum_payment, due_day, start_date, category_id, note, closed_at)
+debt_payments (id, user_id, debt_id, amount, date, expense_id, note, created_at)
 ```
 
 `type` es `'income' | 'expense'`. `bucket` es `'needs' | 'wants' | 'savings'` y es lo que
 alimenta la regla 50/30/20: cada categoría de gasto cuenta como necesidad o deseo según
 cómo esté marcada, y se puede cambiar desde la pantalla *Categorías*.
 
-RLS activo en las tres tablas con `user_id = (select auth.uid())`, tanto en `USING` como en
+RLS activo en las cinco tablas con `user_id = (select auth.uid())`, tanto en `USING` como en
 `WITH CHECK`. Las vistas se crearon con `security_invoker = on`, así que respetan el RLS de
 las tablas base en lugar de saltárselo.
 
 Las categorías con movimientos no se borran: se archivan (`is_archived`), para no dejar
 huérfano el histórico. Las que no se han usado nunca sí se borran.
+
+El saldo pendiente de una deuda **no se guarda**: siempre se deriva de
+`initial_amount − suma de pagos`, así que no puede desincronizarse por muchos pagos que
+edites o borres. Cada pago crea además el gasto correspondiente (`expense_id`), para que
+salga en el cierre del mes; si borras el pago, se borra también ese gasto.
 
 ---
 
@@ -121,6 +130,53 @@ mes cerrado, que siempre saldría favorable.
 
 ---
 
+## Deudas y plan de salida
+
+La pantalla **Deudas** lleva el control de lo que debes y calcula cómo salir antes.
+La lógica está en `js/debts.js`, también en funciones puras.
+
+- **Saldo real**: cada pago baja el pendiente y crea el gasto correspondiente, así que
+  el cierre del mes y la tasa de ahorro siguen cuadrando.
+- **Simulación mes a mes**: se aplican los intereses (TAE ÷ 12), se pagan las cuotas
+  mínimas y todo lo que sobra ataca a la deuda objetivo. Las cuotas de las deudas ya
+  liquidadas se reinvierten en las que quedan — el efecto "bola de nieve".
+- **Dos estrategias**: *avalancha* (primero el interés más alto, menos intereses en total)
+  y *bola de nieve* (primero el saldo más pequeño, se liquida una antes). La app compara
+  las dos con tus números y dice cuál te conviene y por cuánto.
+- **Cuánto aportar de más**: la aportación extra que propone sale de lo que realmente te
+  ha sobrado los últimos meses cerrados, menos un colchón del 20 %. El deslizador deja
+  simular cualquier importe y muestra cuántos meses te ahorras y cuántos intereses.
+- **Casos sin salida**: si la cuota mínima no cubre ni los intereses, el saldo sube en vez
+  de bajar. La simulación lo detecta y lo dice en vez de dar una fecha falsa.
+
+Estas tarjetas también aparecen mezcladas en la pantalla de Análisis, ordenadas por gravedad
+junto al resto.
+
+---
+
+## Acceso rápido: PIN y huella
+
+Opcional, se activa desde ⚙ → *Acceso rápido*. Está en `js/lock.js`.
+
+Un PIN que sólo tape la pantalla no protegería nada, así que aquí es de verdad la llave:
+
+- La sesión de Supabase **no se guarda en claro** en ninguna parte. Con el bloqueo activo,
+  el cliente la mantiene sólo en memoria y en disco queda cifrada con AES-GCM.
+- **Cifrado en sobre**: la sesión se cifra con una clave maestra aleatoria; esa clave se
+  guarda envuelta con PBKDF2-SHA256 (250 000 iteraciones) del PIN, y también del secreto de
+  la huella. Cuando Supabase rota el token de refresco basta con re-cifrar la sesión: los dos
+  métodos siguen abriendo la misma clave maestra.
+- **Huella / Face ID** con WebAuthn y la extensión PRF: el autenticador del dispositivo
+  devuelve un secreto estable de 32 bytes tras verificarte, y ese secreto hace de llave. No
+  necesita servidor porque no se está autenticando contra nadie, sólo derivando una clave.
+  Si el dispositivo no soporta PRF, se queda en PIN.
+- El **PIN se configura siempre primero**, para que la huella nunca sea el único camino de
+  vuelta a tus datos, y la pantalla de bloqueo mantiene un *"Entrar con email y contraseña"*
+  como salida de emergencia.
+- Tras **5 minutos** en segundo plano se vuelve a pedir.
+
+---
+
 ## Estructura
 
 ```
@@ -134,10 +190,13 @@ finanzas/
 │   ├── supabase.js           cliente
 │   ├── store.js              estado, carga y CRUD
 │   ├── analysis.js           motor de análisis (funciones puras)
+│   ├── debts.js              motor de deudas: amortización y estrategias de salida
+│   ├── lock.js               acceso con PIN / huella y cifrado de la sesión
 │   ├── charts.js             envoltorio de Chart.js
 │   ├── ui.js                 paneles inferiores, confirmaciones, estados de carga
 │   ├── app.js                router y navegación
-│   └── views/                dashboard · add-movement · analysis · history · categories · auth
+│   └── views/                dashboard · add-movement · debts · analysis · history
+│                             categories · auth · lock
 ├── vendor/                   supabase-js y chart.js con la versión fijada
 └── supabase/migrations/
 ```

@@ -16,7 +16,7 @@ import {
 
 /* ---------------------------------------------------------------- teclado --- */
 
-function amountKeypad(initialCents = 0) {
+export function amountKeypad(initialCents = 0) {
   const node = el(`
     <div>
       <div class="amount-display">
