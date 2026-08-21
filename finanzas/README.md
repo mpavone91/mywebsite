@@ -4,6 +4,8 @@ App de control de gastos e ingresos, pensada para sustituir el Excel. Cada perso
 registra tiene sus propios datos, aislados por RLS.
 Registro rápido desde el móvil, cierre diario y mensual en tiempo real, y un bloque de
 análisis automático que explica en qué se va el dinero y qué recortar primero.
+Además de lo personal, cada usuario puede llevar la contabilidad de un negocio en un espacio
+aparte, con los cierres diarios del local.
 
 - **Frontend**: HTML + JavaScript con módulos ES, sin build step.
 - **Datos**: Supabase (Postgres + Auth + RLS).
@@ -38,8 +40,11 @@ Las migraciones están en `supabase/migrations/` y se aplican en orden:
 | `0007_generic_seed.sql` | Categorías sembradas genéricas (sin nombres propios) y limpieza de las ya creadas |
 | `0008_fixed_items.sql` | Plan mensual: ingresos y gastos fijos + vista `fixed_items_monthly` |
 | `0009_variable_fixed_items.sql` | Apuntes del plan con importe variable (media de lo registrado) |
+| `0010_workspaces.sql` | Espacios de trabajo: `workspaces` + `workspace_id` en las ocho tablas |
+| `0011_workspace_default.sql` | `default_workspace()` como DEFAULT de `workspace_id` |
+| `0012_daily_closings.sql` | Cierres diarios del local, cuentas de cobro y `create_business_workspace()` |
 
-Para recrear el proyecto desde cero, ejecuta los nueve archivos por orden en el SQL Editor
+Para recrear el proyecto desde cero, ejecuta los doce archivos por orden en el SQL Editor
 de Supabase y cambia `SUPABASE_URL` / `SUPABASE_KEY` en `js/config.js`.
 
 ### 2. Crear tu usuario
@@ -87,6 +92,7 @@ con el formulario ya desplegado.
 ## Modelo de datos
 
 ```
+workspaces    (id, user_id, name, kind, color, is_default, created_at)
 categories    (id, user_id, name, type, color, bucket, is_archived, created_at)
 incomes       (id, user_id, amount, category_id, source, date, is_recurring, created_at)
 expenses      (id, user_id, amount, category_id, note,   date, is_recurring, created_at)
@@ -99,7 +105,11 @@ transfers     (id, user_id, from_account_id, to_account_id, amount, date, note, 
 fixed_items   (id, user_id, kind, name, amount, frequency, amount_mode, match_text,
                lookback_months, category_id, account_id, day_of_month, is_active,
                note, created_at)
+daily_closings(id, user_id, workspace_id, date, card, online, cash, total, note, created_at)
 ```
+
+Las ocho tablas de movimiento llevan además `workspace_id`, y `accounts` un `role`
+(`card | online | cash`) para las cuentas de cobro del local. `incomes` lleva `closing_id`.
 
 `expenses` e `incomes` llevan además un `account_id` opcional. Nulo significa "sin asignar"
 y cuenta como personal, así que todo lo registrado antes de que existieran las cuentas sigue
@@ -281,6 +291,51 @@ cifra.
 
 ---
 
+## Espacios: personal y empresa
+
+Un **espacio** es una contabilidad entera y cerrada: sus categorías, sus cuentas, sus
+movimientos, sus deudas, su plan y su análisis. Al registrarte se crea el espacio *Personal*;
+desde la pastilla de la cabecera puedes crear el de **Empresa** y cambiar de uno a otro.
+
+Nada se mezcla entre espacios: todas las tablas llevan `workspace_id` y todas las consultas
+lo filtran. Cambiar de espacio no es un filtro más, así que recarga los datos y vuelve a la
+home en lugar de repintar la pantalla en la que estabas.
+
+`workspace_id` tiene como DEFAULT la función `default_workspace()`, que devuelve el espacio
+por defecto del usuario. Así, un cliente que no envíe la columna sigue escribiendo en su
+espacio personal en lugar de fallar.
+
+Crear el espacio de empresa es una sola llamada a `create_business_workspace(nombre)`: crea
+el espacio, sus diez categorías de negocio y sus tres cuentas de cobro en la misma
+transacción, para que no pueda quedar a medias.
+
+### Cierres diarios
+
+La pantalla **Cierres** sustituye a *Plan* en la barra cuando estás en un espacio de empresa.
+Un cierre es el parte del día: **tarjeta, online y efectivo**. El total es una columna
+`GENERATED STORED`, y hay un único parte por día y espacio (índice único; si repites fecha,
+la app te manda a editarlo en vez de duplicarlo).
+
+Guardar un parte crea además **un ingreso por cada forma de cobro con importe**, cada uno en
+su cuenta (`accounts.role` = `card | online | cash`) y en la categoría *Facturación*. Son
+ingresos normales, así que el análisis, el histórico y el cierre del mes los ven sin saber
+nada de cierres; y como son los mismos euros contados una sola vez, no hay doble conteo.
+
+- Al **editar** un parte los ingresos se rehacen enteros en vez de parchearse: son tres como
+  mucho, y así no hay que razonar sobre qué método pasó de tener importe a no tenerlo.
+- Al **borrarlo** se van con él (`incomes.closing_id` con `ON DELETE CASCADE`).
+- Si fallara la creación de los ingresos, el cierre se deshace: sin ellos, mentiría.
+
+La home del espacio de empresa cambia en consecuencia: **Resultado del mes** (facturación −
+gastos, con su margen) en vez de *Gastado este mes*, *Facturado hoy* y la facturación
+prevista a fin de mes al ritmo de los días con parte.
+
+La media es **por día con parte**, no por día natural: un local que cierra los lunes no debe
+salir penalizado. Por eso mismo, cuando faltan tres o más partes del mes, la pantalla lo
+avisa en vez de dar por buena una facturación incompleta.
+
+---
+
 ## Acceso rápido: PIN y huella
 
 Opcional, se activa desde ⚙ → *Acceso rápido*. Está en `js/lock.js`.
@@ -318,12 +373,14 @@ finanzas/
 │   ├── store.js              estado, carga y CRUD
 │   ├── analysis.js           motor de análisis (funciones puras)
 │   ├── debts.js              motor de deudas: amortización y estrategias de salida
+│   ├── closings.js           motor de cierres: facturación, media y resultado del mes
 │   ├── lock.js               acceso con PIN / huella y cifrado de la sesión
 │   ├── charts.js             envoltorio de Chart.js
 │   ├── ui.js                 paneles inferiores, confirmaciones, estados de carga
 │   ├── app.js                router y navegación
 │   └── views/                dashboard · add-movement · debts · analysis · history
-│                             categories · auth · lock
+│                             categories · accounts · plan · closings · workspaces
+│                             auth · lock
 ├── vendor/                   supabase-js y chart.js con la versión fijada
 └── supabase/migrations/
 ```

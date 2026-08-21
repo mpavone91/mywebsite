@@ -1,7 +1,7 @@
 import { el, esc, eur, todayISO, dayLabel, toast, haptic } from '../utils.js';
 import {
   state, addAccount, updateAccount, deleteAccount, addTransfer, deleteTransfer,
-  accountsList, accountById,
+  accountsList, accountById, isBusiness,
 } from '../store.js';
 import { accountsOverview, ACCOUNT_KINDS, kindMeta, SUGGESTED } from '../accounts.js';
 import { openSheet, confirmSheet, emptyState } from '../ui.js';
@@ -91,7 +91,9 @@ export function renderAccounts() {
       <div class="balance-label">Disponible</div>
       <div class="balance-value num ${view.available < 0 ? 'neg' : ''}">${eur(view.available)}</div>
       <div class="balance-sub">
-        ${view.savings > 0 ? `+ ${eur(view.savings)} en ahorro · total ${eur(view.net)}` : 'sin contar el dinero del negocio'}
+        ${view.savings > 0
+    ? `+ ${eur(view.savings)} en ahorro · total ${eur(view.net)}`
+    : (isBusiness() ? 'lo que ha entrado menos lo que ha salido' : 'sin contar el dinero del negocio')}
       </div>
     </div>
   `));

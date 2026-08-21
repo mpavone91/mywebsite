@@ -25,6 +25,9 @@ export const state = {
   accounts: [],
   transfers: [],
   fixedItems: [],
+  closings: [],
+  workspaces: [],
+  workspaceId: null,   // espacio activo: Personal, Empresa…
   loadedFrom: null,   // fecha ISO más antigua cargada
   ready: false,
 };
@@ -96,6 +99,9 @@ function clearState() {
   state.accounts = [];
   state.transfers = [];
   state.fixedItems = [];
+  state.closings = [];
+  state.workspaces = [];
+  state.workspaceId = null;
   state.loadedFrom = null;
   state.ready = false;
 }
@@ -113,6 +119,59 @@ export async function signOut() {
 export async function lockSession() {
   await supabase.auth.signOut({ scope: 'local' });
   clearState();
+}
+
+/* ------------------------------------------------------------- espacios --- */
+
+const ACTIVE_KEY = 'finanzas.workspace';
+
+/**
+ * Carga los espacios del usuario y decide cuál es el activo.
+ * Se guarda el último usado por dispositivo; si ya no existe (se borró, o es
+ * de otra cuenta) se cae al espacio por defecto.
+ */
+export async function loadWorkspaces() {
+  const { data, error } = await supabase
+    .from('workspaces').select('*').order('is_default', { ascending: false }).order('created_at');
+  if (error) throw error;
+
+  state.workspaces = data;
+  if (!data.length) { state.workspaceId = null; return null; }
+
+  let saved = null;
+  try { saved = localStorage.getItem(ACTIVE_KEY); } catch { /* almacenamiento bloqueado */ }
+
+  state.workspaceId = data.some((w) => w.id === saved) ? saved : data[0].id;
+  return activeWorkspace();
+}
+
+export const activeWorkspace = () => state.workspaces.find((w) => w.id === state.workspaceId) || null;
+export const isBusiness = () => activeWorkspace()?.kind === 'business';
+
+/** Cambia de espacio. Quien llama se encarga de recargar los datos. */
+export function setWorkspace(id) {
+  if (!state.workspaces.some((w) => w.id === id)) return false;
+  state.workspaceId = id;
+  try { localStorage.setItem(ACTIVE_KEY, id); } catch { /* almacenamiento bloqueado */ }
+  state.ready = false;
+  return true;
+}
+
+/** Crea el espacio de empresa con sus categorías y cuentas de cobro. */
+export async function createBusinessWorkspace(name) {
+  const { data, error } = await supabase.rpc('create_business_workspace', { ws_name: name });
+  if (error) throw error;
+  await loadWorkspaces();
+  return data;
+}
+
+export async function renameWorkspace(id, name) {
+  const { data, error } = await supabase
+    .from('workspaces').update({ name: name.trim() }).eq('id', id).select().single();
+  if (error) throw error;
+  state.workspaces = state.workspaces.map((w) => (w.id === id ? data : w));
+  emit();
+  return data;
 }
 
 /* ----------------------------------------------------------------- carga --- */
@@ -135,8 +194,23 @@ function normalizeAccount(row) {
   return { ...row, opening_balance: Number(row.opening_balance) };
 }
 
+function normalizeClosing(row) {
+  return {
+    ...row,
+    card: Number(row.card),
+    online: Number(row.online),
+    cash: Number(row.cash),
+    total: Number(row.total),
+  };
+}
+
+/** Toda consulta va acotada al espacio activo: las contabilidades no se mezclan. */
+function inWorkspace(table) {
+  return supabase.from(table).select('*').eq('workspace_id', state.workspaceId);
+}
+
 async function fetchRange(table, from, to) {
-  let q = supabase.from(table).select('*').gte('date', from).order('date', { ascending: false });
+  let q = inWorkspace(table).gte('date', from).order('date', { ascending: false });
   if (to) q = q.lte('date', to);
   const { data, error } = await q;
   if (error) throw error;
@@ -164,23 +238,24 @@ const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 async function fetchEverything() {
   const from = `${shiftMonth(monthKey(), -(WINDOW_MONTHS - 1))}-01`;
 
-  const [cats, expenses, incomes, debts, debtPayments, accounts, transfers, fixedItems] = await Promise.all([
-    supabase.from('categories').select('*').order('type').order('name'),
+  const [cats, expenses, incomes, debts, debtPayments, accounts, transfers, fixedItems, closings] = await Promise.all([
+    inWorkspace('categories').order('type').order('name'),
     fetchRange('expenses', from),
     fetchRange('incomes', from),
-    supabase.from('debts').select('*').order('created_at'),
+    inWorkspace('debts').order('created_at'),
     // Sin ventana temporal: el saldo pendiente sale de la suma de TODOS los pagos
-    supabase.from('debt_payments').select('*').order('date', { ascending: false }),
-    supabase.from('accounts').select('*').order('created_at'),
+    inWorkspace('debt_payments').order('date', { ascending: false }),
+    inWorkspace('accounts').order('created_at'),
     // Igual que los pagos: el saldo de cada cuenta necesita el histórico entero
-    supabase.from('transfers').select('*').order('date', { ascending: false }),
-    supabase.from('fixed_items').select('*').order('kind').order('name'),
+    inWorkspace('transfers').order('date', { ascending: false }),
+    inWorkspace('fixed_items').order('kind').order('name'),
+    inWorkspace('daily_closings').gte('date', from).order('date', { ascending: false }),
   ]);
-  for (const result of [cats, debts, debtPayments, accounts, transfers, fixedItems]) {
+  for (const result of [cats, debts, debtPayments, accounts, transfers, fixedItems, closings]) {
     if (result.error) throw result.error;
   }
 
-  return { from, cats, expenses, incomes, debts, debtPayments, accounts, transfers, fixedItems };
+  return { from, cats, expenses, incomes, debts, debtPayments, accounts, transfers, fixedItems, closings };
 }
 
 export async function loadAll(attempt = 0) {
@@ -205,6 +280,7 @@ export async function loadAll(attempt = 0) {
   state.accounts = data.accounts.data.map(normalizeAccount);
   state.transfers = data.transfers.data.map(normalize);
   state.fixedItems = data.fixedItems.data.map(normalize);
+  state.closings = data.closings.data.map(normalizeClosing);
   state.loadedFrom = data.from;
   state.ready = true;
 
@@ -258,6 +334,9 @@ export async function ensureMonth(key) {
 
 /* ------------------------------------------------------------------ CRUD --- */
 
+/** Todo lo que se crea nace en el espacio activo. */
+const stamped = (payload) => ({ ...payload, workspace_id: state.workspaceId });
+
 const byDateDesc = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (a.created_at < b.created_at ? 1 : -1));
 
 export async function addExpense({ amount, category_id, account_id, note, date, is_recurring }) {
@@ -269,7 +348,7 @@ export async function addExpense({ amount, category_id, account_id, note, date, 
     date: date || todayISO(),
     is_recurring: Boolean(is_recurring),
   };
-  const { data, error } = await supabase.from('expenses').insert(payload).select().single();
+  const { data, error } = await supabase.from('expenses').insert(stamped(payload)).select().single();
   if (error) throw error;
   state.expenses = [normalize(data), ...state.expenses].sort(byDateDesc);
   emit();
@@ -285,7 +364,7 @@ export async function addIncome({ amount, category_id, account_id, source, date,
     date: date || todayISO(),
     is_recurring: Boolean(is_recurring),
   };
-  const { data, error } = await supabase.from('incomes').insert(payload).select().single();
+  const { data, error } = await supabase.from('incomes').insert(stamped(payload)).select().single();
   if (error) throw error;
   state.incomes = [normalize(data), ...state.incomes].sort(byDateDesc);
   emit();
@@ -315,7 +394,7 @@ export async function deleteMovement(kind, id) {
 export async function addCategory({ name, type, color, bucket }) {
   const { data, error } = await supabase
     .from('categories')
-    .insert({ name: name.trim(), type, color, bucket })
+    .insert(stamped({ name: name.trim(), type, color, bucket }))
     .select()
     .single();
   if (error) throw error;
@@ -350,10 +429,122 @@ export async function deleteCategory(id) {
   return null;
 }
 
+/* --------------------------------------------------------- cierres diarios --- */
+
+const METHODS = [
+  { key: 'card', role: 'card', label: 'Tarjeta' },
+  { key: 'online', role: 'online', label: 'Online' },
+  { key: 'cash', role: 'cash', label: 'Efectivo' },
+];
+
+const takingsCategory = () =>
+  state.categories.find((c) => c.type === 'income' && /facturaci/i.test(c.name))
+  || categoriesOf('income')[0]
+  || null;
+
+const accountByRole = (role) => state.accounts.find((a) => a.role === role) || null;
+
+/**
+ * Crea los ingresos de un cierre: uno por forma de cobro con importe, cada uno
+ * en su cuenta. Son ingresos normales y corrientes, así que el cierre del mes,
+ * el análisis y el histórico los ven sin saber nada de cierres.
+ */
+async function createClosingIncomes(closing) {
+  const category = takingsCategory();
+  const rows = METHODS
+    .filter((m) => Number(closing[m.key]) > 0)
+    .map((m) => ({
+      workspace_id: state.workspaceId,
+      closing_id: closing.id,
+      amount: round2(closing[m.key]),
+      category_id: category?.id || null,
+      // El rol de la cuenta de cobro coincide con la forma de pago: card/online/cash
+      account_id: accountByRole(m.key)?.id || null,
+      source: `Cierre ${m.label}`,
+      date: closing.date,
+      is_recurring: false,
+    }));
+
+  if (!rows.length) return [];
+
+  const { data, error } = await supabase.from('incomes').insert(rows).select();
+  if (error) throw error;
+  return data.map(normalize);
+}
+
+export async function addClosing({ date, card, online, cash, note }) {
+  const payload = {
+    date: date || todayISO(),
+    card: round2(card || 0),
+    online: round2(online || 0),
+    cash: round2(cash || 0),
+    note: note?.trim() || null,
+  };
+  if (payload.card + payload.online + payload.cash <= 0) {
+    throw new Error('El cierre tiene que llevar algún importe');
+  }
+
+  const { data, error } = await supabase
+    .from('daily_closings').insert(stamped(payload)).select().single();
+  if (error) throw error;
+
+  const closing = normalizeClosing(data);
+  try {
+    const incomes = await createClosingIncomes(closing);
+    state.incomes = [...incomes, ...state.incomes].sort(byDateDesc);
+  } catch (err) {
+    // Sin sus ingresos el cierre miente, así que se deshace entero
+    await supabase.from('daily_closings').delete().eq('id', closing.id);
+    throw err;
+  }
+
+  state.closings = [closing, ...state.closings].sort(byDateDesc);
+  emit();
+  return closing;
+}
+
+/**
+ * Edita un cierre. Los ingresos se rehacen en vez de parchearse: son tres como
+ * mucho, y así no hay que razonar sobre qué método pasó de tener importe a no
+ * tenerlo.
+ */
+export async function updateClosing(id, patch) {
+  const payload = { ...patch };
+  for (const m of METHODS) if (payload[m.key] !== undefined) payload[m.key] = round2(payload[m.key] || 0);
+  if (payload.note !== undefined) payload.note = payload.note?.trim() || null;
+
+  const { data, error } = await supabase
+    .from('daily_closings').update(payload).eq('id', id).select().single();
+  if (error) throw error;
+
+  const closing = normalizeClosing(data);
+
+  const { error: delError } = await supabase.from('incomes').delete().eq('closing_id', id);
+  if (delError) throw delError;
+  state.incomes = state.incomes.filter((i) => i.closing_id !== id);
+
+  const incomes = await createClosingIncomes(closing);
+  state.incomes = [...incomes, ...state.incomes].sort(byDateDesc);
+  state.closings = state.closings.map((c) => (c.id === id ? closing : c)).sort(byDateDesc);
+  emit();
+  return closing;
+}
+
+/** Borra el cierre; sus ingresos se van con él por la FK en cascada. */
+export async function deleteClosing(id) {
+  const { error } = await supabase.from('daily_closings').delete().eq('id', id);
+  if (error) throw error;
+  state.closings = state.closings.filter((c) => c.id !== id);
+  state.incomes = state.incomes.filter((i) => i.closing_id !== id);
+  emit();
+}
+
+export const closingForDate = (date) => state.closings.find((c) => c.date === date) || null;
+
 /* ---------------------------------------------------------------- cuentas --- */
 
 export async function addAccount(payload) {
-  const { data, error } = await supabase.from('accounts').insert(cleanAccount(payload)).select().single();
+  const { data, error } = await supabase.from('accounts').insert(stamped(cleanAccount(payload))).select().single();
   if (error) throw error;
   state.accounts = [...state.accounts, normalizeAccount(data)];
   emit();
@@ -406,7 +597,7 @@ export async function addTransfer({ from_account_id, to_account_id, amount, date
     date: date || todayISO(),
     note: note?.trim() || null,
   };
-  const { data, error } = await supabase.from('transfers').insert(payload).select().single();
+  const { data, error } = await supabase.from('transfers').insert(stamped(payload)).select().single();
   if (error) throw error;
   state.transfers = [normalize(data), ...state.transfers].sort(byDateDesc);
   emit();
@@ -442,7 +633,7 @@ export function personalData() {
 /* ------------------------------------------------------------ plan fijo --- */
 
 export async function addFixedItem(payload) {
-  const { data, error } = await supabase.from('fixed_items').insert(cleanFixed(payload)).select().single();
+  const { data, error } = await supabase.from('fixed_items').insert(stamped(cleanFixed(payload))).select().single();
   if (error) throw error;
   state.fixedItems = [...state.fixedItems, normalize(data)].sort(sortFixed);
   emit();
@@ -480,7 +671,7 @@ const sortFixed = (a, b) => (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : a.name
 /* ----------------------------------------------------------------- deudas --- */
 
 export async function addDebt(payload) {
-  const { data, error } = await supabase.from('debts').insert(cleanDebt(payload)).select().single();
+  const { data, error } = await supabase.from('debts').insert(stamped(cleanDebt(payload))).select().single();
   if (error) throw error;
   state.debts = [...state.debts, normalizeDebt(data)];
   emit();
@@ -552,7 +743,7 @@ export async function addDebtPayment({ debt_id, amount, date, note, account_id, 
     expense_id: expense?.id || null,
   };
 
-  const { data, error } = await supabase.from('debt_payments').insert(payload).select().single();
+  const { data, error } = await supabase.from('debt_payments').insert(stamped(payload)).select().single();
   if (error) {
     // No dejamos el gasto huérfano si el pago no llegó a grabarse
     if (expense) await deleteMovement('expense', expense.id).catch(() => {});
