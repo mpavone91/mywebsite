@@ -36,8 +36,9 @@ Las migraciones están en `supabase/migrations/` y se aplican en orden:
 | `0005_debts.sql` | Deudas y sus pagos + vista `debt_status` con el saldo pendiente |
 | `0006_accounts.sql` | Cuentas (bancos), traspasos, `account_id` en gastos e ingresos + vista `account_balances` |
 | `0007_generic_seed.sql` | Categorías sembradas genéricas (sin nombres propios) y limpieza de las ya creadas |
+| `0008_fixed_items.sql` | Plan mensual: ingresos y gastos fijos + vista `fixed_items_monthly` |
 
-Para recrear el proyecto desde cero, ejecuta los siete archivos por orden en el SQL Editor
+Para recrear el proyecto desde cero, ejecuta los ocho archivos por orden en el SQL Editor
 de Supabase y cambia `SUPABASE_URL` / `SUPABASE_KEY` en `js/config.js`.
 
 ### 2. Crear tu usuario
@@ -94,6 +95,8 @@ debt_payments (id, user_id, debt_id, amount, date, expense_id, note, created_at)
 accounts      (id, user_id, name, kind, color, opening_balance, counts_as_personal,
                is_default, is_archived, note, created_at)
 transfers     (id, user_id, from_account_id, to_account_id, amount, date, note, created_at)
+fixed_items   (id, user_id, kind, name, amount, frequency, category_id, account_id,
+               day_of_month, is_active, note, created_at)
 ```
 
 `expenses` e `incomes` llevan además un `account_id` opcional. Nulo significa "sin asignar"
@@ -104,7 +107,7 @@ siendo válido.
 alimenta la regla 50/30/20: cada categoría de gasto cuenta como necesidad o deseo según
 cómo esté marcada, y se puede cambiar desde la pantalla *Categorías*.
 
-RLS activo en las siete tablas con `user_id = (select auth.uid())`, tanto en `USING` como en
+RLS activo en las ocho tablas con `user_id = (select auth.uid())`, tanto en `USING` como en
 `WITH CHECK`. Las vistas se crearon con `security_invoker = on`, así que respetan el RLS de
 las tablas base en lugar de saltárselo.
 
@@ -216,6 +219,38 @@ Dos detalles que hacían falta para que eso no se volviera contra sí mismo:
 - Una rotación de token (`TOKEN_REFRESHED`) ya no dispara una recarga de datos. Como el
   reintento renueva el token, y renovar emite ese evento, se realimentaba en un bucle de
   repintados.
+
+---
+
+## Plan mensual
+
+La pantalla **Plan** responde una pregunta que los movimientos por sí solos no contestan:
+*cuánto me queda libre cada mes*. La lógica está en `js/plan.js`.
+
+Los movimientos cuentan lo que ha pasado; el plan declara con qué se cuenta cada mes.
+De la resta sale el margen:
+
+```
+ingresos fijos − gastos fijos − cuotas de deuda = margen del mes
+```
+
+- **Las cuotas no se apuntan a mano.** Salen de la pantalla Deudas. Si se apuntaran también
+  como gasto fijo se restarían dos veces, así que la app las trae sola y lo avisa en pantalla.
+- **La periodicidad se guarda tal cual.** Un seguro de 480 € al año se apunta como anual y se
+  muestra como 40 €/mes. Guardar ya la división obligaría a recordar el importe real cada vez
+  que hubiera que revisarlo.
+- **Ingreso fijo a partir del histórico.** Para una nómina que varía cada mes, el formulario
+  ofrece la media de los meses ya registrados, con su mínimo y su máximo. Sólo cuenta los
+  meses con datos: un mes a cero suele significar "no lo apunté", no "no cobré".
+- **Fijos pendientes.** El plan reconoce cuáles ya tienen movimiento este mes y cuáles no, y
+  los que faltan se registran de un toque con su importe ya puesto. El emparejamiento va por
+  nombre, y como respaldo por categoría + recurrente + importe parecido (±5 %), para
+  reconocer también lo que se apuntó a mano.
+- **Plan contra realidad.** El margen se compara con el gasto variable del mes — lo de tu
+  bolsillo que no es un fijo ya contado — y de ahí sale cuánto queda y cuánto por día.
+
+Si los fijos superan a los ingresos, la pantalla deja de hablar de margen y dice directamente
+cuánto habría que ingresar de más al mes para quedarse a cero.
 
 ---
 

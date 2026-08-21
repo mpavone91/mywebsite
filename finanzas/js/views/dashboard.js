@@ -9,6 +9,7 @@ import { categoryDonut } from '../charts.js';
 import { openExpenseSheet, openIncomeSheet } from './add-movement.js';
 import { openTransferSheet } from './accounts.js';
 import { accountsOverview } from '../accounts.js';
+import { planOverview } from '../plan.js';
 import { openPaymentSheet } from './debts.js';
 import { debtsOverview, daysUntil, simulatePayoff } from '../debts.js';
 import { emptyState } from '../ui.js';
@@ -93,6 +94,7 @@ export function renderDashboard() {
           </button>
         </div>
 
+        <div data-plan-strip></div>
         <div data-accounts-strip></div>
 
         <div data-debt-strip></div>
@@ -193,6 +195,33 @@ export function renderDashboard() {
   screen.querySelector('[data-recent]').appendChild(recentMovements());
 
   /* --- acciones --------------------------------------------------------- */
+  /* --- tira del plan ---------------------------------------------------- */
+  const planView = planOverview(state, month);
+  if (planView.hasPlan) {
+    const negative = planView.margin < 0;
+    const strip = el(`
+      <a href="#/plan" class="card row-between" style="text-decoration:none;color:inherit;padding:14px 16px">
+        <span class="grow" style="min-width:0">
+          <span class="tiny muted" style="display:block">
+            ${negative ? 'Te faltan al mes' : planView.margin > 0 && planView.variableSpent > 0 ? 'Te queda del margen' : 'Libre tras los fijos'}
+          </span>
+          <span class="num ${negative || planView.left < 0 ? 'neg' : 'pos'}" style="font-weight:700;font-size:18px">
+            ${eur(negative ? planView.shortfall : (planView.variableSpent > 0 ? planView.left : planView.margin))}
+          </span>
+        </span>
+        <span style="text-align:right">
+          <span class="tiny muted" style="display:block">${negative ? 'Ingresos fijos' : 'Al día'}</span>
+          <span class="small" style="font-weight:600">
+            ${negative ? eur(planView.income, true) : planView.leftPerDay !== null && planView.left > 0
+    ? `${eur(planView.leftPerDay)}/día` : eur(planView.dailyAllowance) + '/día'}
+          </span>
+        </span>
+        <span class="muted" style="margin-left:8px">›</span>
+      </a>
+    `);
+    screen.querySelector('[data-plan-strip]').appendChild(strip);
+  }
+
   /* --- tira de cuentas -------------------------------------------------- */
   if (accounts.rows.length) {
     const strip = el(`

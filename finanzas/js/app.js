@@ -13,6 +13,7 @@ import { renderHistory } from './views/history.js';
 import { renderCategories } from './views/categories.js';
 import { renderDebts } from './views/debts.js';
 import { renderAccounts } from './views/accounts.js';
+import { renderPlan } from './views/plan.js';
 import { renderAuth, accountSheetContent } from './views/auth.js';
 import { renderLockScreen, openLockSetupSheet, lockSettings } from './views/lock.js';
 import { openExpenseSheet, openIncomeSheet } from './views/add-movement.js';
@@ -27,6 +28,7 @@ const ASKED_KEY = 'finanzas.lock.asked';
 
 const ROUTES = {
   '/': { title: 'Hoy', render: renderDashboard },
+  '/plan': { title: 'Plan', render: renderPlan },
   '/cuentas': { title: 'Cuentas', render: renderAccounts },
   '/deudas': { title: 'Deudas', render: renderDebts },
   '/analisis': { title: 'Análisis', render: renderAnalysis },
@@ -43,6 +45,7 @@ const SHORTCUTS = {
 
 const ICONS = {
   '/': '<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5"/>',
+  '/plan': '<path d="M4 4h16v16H4zM8 3v3M16 3v3M4 10h16M8 14h3M8 17h6"/>',
   '/cuentas': '<path d="M3 21h18M4 21V10l8-6 8 6v11M9 21v-6h6v6"/>',
   '/deudas': '<path d="M3 7h18v11H3zM3 11h18M7 15h3"/>',
   '/analisis': '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
@@ -150,6 +153,7 @@ function navBar(active) {
   return el(`
     <nav class="nav">
       ${item('/', 'Hoy')}
+      ${item('/plan', 'Plan')}
       ${item('/cuentas', 'Cuentas')}
       ${item('/deudas', 'Deudas')}
       ${item('/analisis', 'Análisis')}

@@ -3,6 +3,7 @@ import { state, personalData } from '../store.js';
 import { analyzeMonth } from '../analysis.js';
 import { debtInsights } from '../debts.js';
 import { accountInsights } from '../accounts.js';
+import { planInsights } from '../plan.js';
 import { RULES } from '../config.js';
 import { incomeVsExpenseBars, cumulativeSpendLine } from '../charts.js';
 import { emptyState } from '../ui.js';
@@ -52,6 +53,7 @@ export function renderAnalysis() {
       expenses: state.expenses, incomes: state.incomes, month,
     }),
     ...accountInsights(state, month),
+    ...planInsights(state, month),
   ]
     .map((insight, i) => ({ insight, i }))
     .sort((x, y) => (rank[x.insight.level] - rank[y.insight.level]) || (x.i - y.i))
