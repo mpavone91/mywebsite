@@ -3,9 +3,13 @@ import {
   state, addFixedItem, updateFixedItem, deleteFixedItem,
   addExpense, addIncome, categoriesOf,
 } from '../store.js';
-import { planOverview, suggestFixedIncome, FREQUENCIES, frequencyMeta, monthlyAmount } from '../plan.js';
+import {
+  planOverview, suggestFixedIncome, FREQUENCIES, frequencyMeta,
+  monthlyAmount, declaredMonthly, averageFor,
+} from '../plan.js';
 import { openSheet, confirmSheet, emptyState } from '../ui.js';
 import { accountChips, rememberedAccount } from './accounts.js';
+import { openExpenseSheet, openIncomeSheet } from './add-movement.js';
 
 /* ================================================================ pantalla === */
 
@@ -172,7 +176,7 @@ function pendingCard(plan) {
           ${item.kind === 'income' ? '↑' : '↓'} ${esc(item.name)}
           <span class="muted">${eur(item.monthly)}</span>
         </span>
-        <button class="btn" data-register style="min-height:34px;padding:0 12px;font-size:13px">Registrar</button>
+        <button class="btn" data-register style="min-height:34px;padding:0 12px;font-size:13px">${item.amount_mode === 'average' ? 'Apuntar' : 'Registrar'}</button>
       </div>
     `);
     const btn = row.querySelector('[data-register]');
@@ -182,11 +186,12 @@ function pendingCard(plan) {
       try {
         await registerFixed(item);
         haptic(18);
-        toast(`${item.name} registrado`);
+        if (item.amount_mode !== 'average') toast(`${item.name} registrado`);
       } catch (err) {
         toast(err.message || 'No se pudo registrar', 'err');
+      } finally {
         btn.disabled = false;
-        btn.textContent = 'Registrar';
+        btn.textContent = item.amount_mode === 'average' ? 'Apuntar' : 'Registrar';
       }
     });
     list.appendChild(row);
@@ -195,21 +200,36 @@ function pendingCard(plan) {
   return card;
 }
 
-/** Crea el movimiento real a partir del apunte del plan. */
+/**
+ * Crea el movimiento real a partir del apunte del plan.
+ *
+ * Si el importe es variable no se puede inventar: se abre el formulario con
+ * todo relleno menos la cantidad, que tiene que salir de la factura real.
+ */
 async function registerFixed(item) {
-  const payload = {
-    amount: monthlyAmount(item),
+  const common = {
     category_id: item.category_id,
     account_id: item.account_id || rememberedAccount(item.kind),
     date: dateForItem(item),
     is_recurring: true,
   };
+  const label = item.match_text?.trim() || item.name;
 
-  if (item.kind === 'income') {
-    // La fuente lleva el nombre del apunte: es lo que los vuelve a emparejar
-    return addIncome({ ...payload, source: item.name });
+  if (item.amount_mode === 'average') {
+    const prefill = item.kind === 'income'
+      ? { ...common, source: label }
+      : { ...common, note: label };
+    return item.kind === 'income'
+      ? openIncomeSheet({ prefill })
+      : openExpenseSheet({ prefill });
   }
-  return addExpense({ ...payload, note: item.name });
+
+  const payload = { ...common, amount: monthlyAmount(item, item.estimate) };
+  if (item.kind === 'income') {
+    // La fuente lleva la palabra clave: es lo que los vuelve a emparejar
+    return addIncome({ ...payload, source: label });
+  }
+  return addExpense({ ...payload, note: label });
 }
 
 /** El día del mes configurado, sin pasarse del mes ni del día de hoy. */
@@ -250,17 +270,24 @@ function itemsSection(kind, title, items) {
   const list = section.querySelector('[data-list]');
   for (const item of items) {
     const freq = frequencyMeta(item.frequency);
+    const { source, stats } = item.estimate;
+
+    const detail = source === 'average'
+      ? `media de ${stats.count} ${stats.count === 1 ? 'registro' : 'registros'} · entre ${eur(stats.min)} y ${eur(stats.max)}`
+      : source === 'estimate'
+        ? 'estimado · aún sin registros'
+        : `${item.frequency === 'monthly' ? '' : `${eur(item.amount)} ${freq.short} · `}${item.day_of_month ? `día ${item.day_of_month}` : 'sin día fijo'}`;
+
     const row = el(`
       <button class="list-item" type="button">
         <span class="dot" style="background:${item.registered ? 'var(--pos)' : 'var(--text-3)'};
                                  color:${item.registered ? 'var(--pos)' : 'var(--text-3)'}"></span>
         <span class="grow" style="min-width:0">
-          <span class="truncate" style="display:block;font-weight:600">${esc(item.name)}</span>
-          <span class="tiny muted">
-            ${item.frequency === 'monthly' ? '' : `${eur(item.amount)} ${freq.short} · `}
-            ${item.day_of_month ? `día ${item.day_of_month}` : 'sin día fijo'}
-            ${item.registered ? ' · ✓ registrado' : ''}
+          <span class="truncate" style="display:block;font-weight:600">
+            ${esc(item.name)}
+            ${source === 'fixed' ? '' : '<span class="tiny" style="color:var(--accent);font-weight:600"> ~</span>'}
           </span>
+          <span class="tiny muted">${detail}${item.registered ? ' · ✓ registrado' : ''}</span>
         </span>
         <span class="num" style="font-weight:650">${eur(item.monthly)}</span>
       </button>
@@ -285,6 +312,8 @@ export function openFixedSheet({ kind = 'expense', item = null } = {}) {
     editing ? 'Editar apunte fijo' : (isIncome ? 'Nuevo ingreso fijo' : 'Nuevo gasto fijo'),
     (close) => {
       let frequency = item?.frequency || 'monthly';
+      let mode = item?.amount_mode || 'fixed';
+      let lookback = Number(item?.lookback_months) || 6;
 
       const body = el(`
         <div class="stack">
@@ -295,15 +324,50 @@ export function openFixedSheet({ kind = 'expense', item = null } = {}) {
                    value="${esc(item?.name || '')}">
           </label>
 
+          <div>
+            <div class="section-title" style="margin-top:6px">El importe</div>
+            <div class="chips" data-modes>
+              <button type="button" class="chip" data-m="fixed" aria-pressed="${mode === 'fixed'}">
+                Siempre el mismo
+              </button>
+              <button type="button" class="chip" data-m="average" aria-pressed="${mode === 'average'}">
+                Varía cada mes
+              </button>
+            </div>
+            <p class="tiny muted" data-mode-hint style="margin:8px 0 0"></p>
+          </div>
+
           <label class="field">
-            <span>Importe</span>
+            <span data-amount-label>Importe</span>
             <input type="number" data-amount inputmode="decimal" min="0.01" step="0.01"
                    placeholder="0,00" value="${item?.amount ?? ''}">
           </label>
 
           ${isIncome ? '<div data-suggest></div>' : ''}
 
-          <div>
+          <div data-variable hidden>
+            <label class="field">
+              <span>Palabra con la que lo reconozco</span>
+              <input type="text" data-match maxlength="60"
+                     placeholder="${isIncome ? 'Ej. Nómina' : 'Ej. Luz'}"
+                     value="${esc(item?.match_text || '')}">
+              <span class="tiny muted">
+                Se busca en la ${isIncome ? 'fuente' : 'nota'} de cada movimiento. Si lo dejas vacío
+                se usa el nombre del apunte.
+              </span>
+            </label>
+
+            <div class="section-title">Media de los últimos</div>
+            <div class="chips" data-lookbacks>
+              ${[3, 6, 12].map((n) => `
+                <button type="button" class="chip" data-l="${n}"
+                        aria-pressed="${n === lookback}">${n} meses</button>`).join('')}
+            </div>
+
+            <div class="card" data-preview style="padding:12px 14px;margin-top:12px"></div>
+          </div>
+
+          <div data-frequency>
             <div class="section-title" style="margin-top:6px">Cada cuánto</div>
             <div class="chips" data-freqs>
               ${FREQUENCIES.map((f) => `
@@ -367,6 +431,7 @@ export function openFixedSheet({ kind = 'expense', item = null } = {}) {
         hint.textContent = frequency === 'monthly' || !value
           ? 'El plan trabaja con el equivalente mensual de cada apunte.'
           : `Equivale a ${eur(monthly)} al mes.`;
+        if (mode === 'average') paintPreview();
       };
 
       body.querySelectorAll('[data-f]').forEach((btn) => {
@@ -377,7 +442,79 @@ export function openFixedSheet({ kind = 'expense', item = null } = {}) {
         });
       });
       amountInput.addEventListener('input', paintFreq);
-      paintFreq();
+
+      /* --- importe variable: vista previa de lo que reconoce --------------- */
+      const variableBlock = body.querySelector('[data-variable]');
+      const frequencyBlock = body.querySelector('[data-frequency]');
+      const modeHint = body.querySelector('[data-mode-hint]');
+      const amountLabel = body.querySelector('[data-amount-label]');
+      const preview = body.querySelector('[data-preview]');
+      const matchInput = body.querySelector('[data-match]');
+
+      function paintPreview() {
+        const probe = {
+          kind: type,
+          name: body.querySelector('[data-name]').value.trim() || 'x',
+          match_text: matchInput.value.trim(),
+          lookback_months: lookback,
+        };
+        const stats = averageFor(probe, { expenses: state.expenses, incomes: state.incomes });
+
+        preview.replaceChildren(el(stats ? `
+          <div>
+            <div class="tiny muted">Media calculada</div>
+            <div class="row-between" style="margin-top:2px">
+              <strong class="num" style="font-size:18px">${eur(stats.monthly)}/mes</strong>
+              <span class="tiny muted">${stats.count} ${stats.count === 1 ? 'movimiento' : 'movimientos'}</span>
+            </div>
+            <div class="tiny muted" style="margin-top:4px">
+              Repartido entre ${stats.span} ${stats.span === 1 ? 'mes' : 'meses'}
+              · entre ${eur(stats.min)} y ${eur(stats.max)} al mes
+            </div>
+          </div>` : `
+          <div class="tiny muted">
+            Todavía no encuentro movimientos con esa palabra. Hasta que los haya, el plan
+            usará el importe de arriba como estimación.
+          </div>`));
+      }
+
+      function paintMode() {
+        body.querySelectorAll('[data-m]').forEach((b) => {
+          b.setAttribute('aria-pressed', String(b.dataset.m === mode));
+        });
+        const average = mode === 'average';
+        variableBlock.hidden = !average;
+        frequencyBlock.hidden = average;
+        amountLabel.textContent = average ? 'Estimación mientras no haya datos' : 'Importe';
+        modeHint.textContent = average
+          ? 'La luz, una nómina con comisiones, lo que reparte un negocio: el plan usará la media de lo que vayas registrando.'
+          : 'El alquiler, una cuota, una suscripción: siempre el mismo importe.';
+        if (average) {
+          frequency = 'monthly';
+          paintPreview();
+        }
+        paintFreq();
+      }
+
+      body.querySelectorAll('[data-m]').forEach((btn) => {
+        btn.addEventListener('click', () => { mode = btn.dataset.m; haptic(8); paintMode(); });
+      });
+      body.querySelectorAll('[data-l]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          lookback = Number(btn.dataset.l);
+          body.querySelectorAll('[data-l]').forEach((b) => {
+            b.setAttribute('aria-pressed', String(Number(b.dataset.l) === lookback));
+          });
+          haptic(8);
+          paintPreview();
+        });
+      });
+      matchInput.addEventListener('input', paintPreview);
+      body.querySelector('[data-name]').addEventListener('input', () => {
+        if (mode === 'average' && !matchInput.value.trim()) paintPreview();
+      });
+
+      paintMode();
 
       /* --- sugerencia de ingreso a partir del histórico -------------------- */
       if (isIncome) {
@@ -423,7 +560,10 @@ export function openFixedSheet({ kind = 'expense', item = null } = {}) {
           kind: type,
           name,
           amount,
-          frequency,
+          frequency: mode === 'average' ? 'monthly' : frequency,
+          amount_mode: mode,
+          match_text: body.querySelector('[data-match]').value.trim() || null,
+          lookback_months: lookback,
           category_id: body.querySelector('[data-category]').value || null,
           account_id: accounts?.value ?? null,
           day_of_month: day || null,
