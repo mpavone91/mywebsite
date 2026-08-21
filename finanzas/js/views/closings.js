@@ -38,9 +38,9 @@ export function renderClosings() {
         <div class="bar" style="margin-top:12px;display:flex;gap:2px;background:none;border:0;height:10px">
           ${view.byMethod.map((m, i) => `
             <i style="flex:${Math.max(m.value, 0.01)};background:${m.color};
-                      border-radius:${i === 0 ? '99px 0 0 99px' : i === 2 ? '0 99px 99px 0' : '0'}"></i>`).join('')}
+                      border-radius:${i === 0 ? '99px 0 0 99px' : i === view.byMethod.length - 1 ? '0 99px 99px 0' : '0'}"></i>`).join('')}
         </div>
-        <div class="row-between tiny muted" style="margin-top:6px">
+        <div class="row-between tiny muted" style="margin-top:6px;flex-wrap:wrap;gap:4px 10px">
           ${view.byMethod.map((m) => `<span>${m.icon} ${m.label} ${pct(m.share)}</span>`).join('')}
         </div>` : ''}
     </div>
@@ -86,7 +86,7 @@ export function renderClosings() {
   const addBtn = el(`
     <button class="quick quick-expense" data-new style="width:100%">
       ${hoy ? 'Editar el cierre de hoy' : '+ Cierre del día'}
-      <small>${hoy ? `Ya hay parte: ${eur(closingTotal(hoy))}` : 'Tarjeta, online y efectivo'}</small>
+      <small>${hoy ? `Ya hay parte: ${eur(closingTotal(hoy))}` : METHODS.map((m) => m.label).join(' · ')}</small>
     </button>
   `);
   addBtn.addEventListener('click', () => openClosingSheet({ closing: hoy }));
