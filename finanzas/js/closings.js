@@ -3,10 +3,14 @@ import { sum, round2, monthKey, daysInMonth, elapsedDays, eur, pct } from './uti
 /**
  * Cierres diarios del local.
  *
- * Un cierre es el parte del día: tarjeta, online y efectivo. La app guarda ese
- * parte tal cual y además crea sus ingresos, así que la facturación se puede
- * mirar por aquí o desde el análisis de siempre; son los mismos euros contados
- * una sola vez.
+ * Un cierre es el parte del día: lo que entró por cada forma de cobro. La app
+ * guarda ese parte tal cual y además crea sus ingresos, así que la facturación
+ * se puede mirar por aquí o desde el análisis de siempre; son los mismos euros
+ * contados una sola vez.
+ *
+ * METHODS es la única lista de formas de cobro: de ella salen el formulario, el
+ * total, el desglose y los ingresos, así que añadir una es tocar sólo eso (y su
+ * columna en la tabla).
  */
 
 export const METHODS = [
