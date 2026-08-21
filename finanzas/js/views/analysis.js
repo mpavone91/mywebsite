@@ -3,6 +3,8 @@ import { state, personalData } from '../store.js';
 import { analyzeMonth } from '../analysis.js';
 import { debtInsights } from '../debts.js';
 import { accountInsights } from '../accounts.js';
+import { closingInsights } from '../closings.js';
+import { partnerInsights } from '../partners.js';
 import { planInsights } from '../plan.js';
 import { RULES } from '../config.js';
 import { incomeVsExpenseBars, cumulativeSpendLine } from '../charts.js';
@@ -54,6 +56,9 @@ export function renderAnalysis() {
     }),
     ...accountInsights(state, month),
     ...planInsights(state, month),
+    // Sólo dan tarjetas si hay cierres o socios, o sea sólo en un negocio
+    ...closingInsights(state, month),
+    ...partnerInsights(state, month),
   ]
     .map((insight, i) => ({ insight, i }))
     .sort((x, y) => (rank[x.insight.level] - rank[y.insight.level]) || (x.i - y.i))

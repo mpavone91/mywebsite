@@ -2,7 +2,7 @@ import { el, toast } from './utils.js';
 import {
   state, getSession, onAuthChange, loadAll, subscribe, signOut,
   lockSession, restoreSession, currentSession, describeLoadError,
-  loadWorkspaces, isBusiness,
+  loadWorkspaces, isBusiness, loadPartnerBalances,
 } from './store.js';
 import { destroyCharts } from './charts.js';
 import { openSheet, skeletonScreen } from './ui.js';
@@ -16,6 +16,7 @@ import { renderDebts } from './views/debts.js';
 import { renderAccounts } from './views/accounts.js';
 import { renderPlan } from './views/plan.js';
 import { renderClosings } from './views/closings.js';
+import { renderPartners } from './views/partners.js';
 import { openWorkspaceSheet } from './views/workspaces.js';
 import { renderAuth, accountSheetContent } from './views/auth.js';
 import { renderLockScreen, openLockSetupSheet, lockSettings } from './views/lock.js';
@@ -33,6 +34,7 @@ const ROUTES = {
   '/': { title: 'Hoy', render: renderDashboard },
   '/plan': { title: 'Plan', render: renderPlan },
   '/cierres': { title: 'Cierres', render: renderClosings },
+  '/socios': { title: 'Socios', render: renderPartners },
   '/cuentas': { title: 'Cuentas', render: renderAccounts },
   '/deudas': { title: 'Deudas', render: renderDebts },
   '/analisis': { title: 'Análisis', render: renderAnalysis },
@@ -51,6 +53,7 @@ const ICONS = {
   '/': '<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5"/>',
   '/plan': '<path d="M4 4h16v16H4zM8 3v3M16 3v3M4 10h16M8 14h3M8 17h6"/>',
   '/cierres': '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6"/>',
+  '/socios': '<path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1M17 11a3 3 0 1 0-1-5.8M21 20v-1a5 5 0 0 0-3-4.6"/>',
   '/cuentas': '<path d="M3 21h18M4 21V10l8-6 8 6v11M9 21v-6h6v6"/>',
   '/deudas': '<path d="M3 7h18v11H3zM3 11h18M7 15h3"/>',
   '/analisis': '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
@@ -160,7 +163,7 @@ function navBar(active) {
       ${item('/', 'Hoy')}
       ${isBusiness() ? item('/cierres', 'Cierres') : item('/plan', 'Plan')}
       ${item('/cuentas', 'Cuentas')}
-      ${item('/deudas', 'Deudas')}
+      ${isBusiness() ? item('/socios', 'Socios') : item('/deudas', 'Deudas')}
       ${item('/analisis', 'Análisis')}
       ${item('/historico', 'Histórico')}
     </nav>
@@ -253,7 +256,13 @@ function openAccountSheet() {
     });
     content.prepend(toWorkspaces);
 
+    // En un espacio de empresa la barra lleva Cierres y Socios, así que Plan y
+    // Deudas se alcanzan desde aquí: siguen estando, sólo cambian de sitio.
     if (isBusiness()) {
+      const toDebts = el('<button class="btn btn-block" data-debts>Deudas del negocio</button>');
+      toDebts.addEventListener('click', () => { close(true); location.hash = '/deudas'; });
+      content.prepend(toDebts);
+
       const toPlan = el('<button class="btn btn-block" data-plan>Plan de gastos fijos</button>');
       toPlan.addEventListener('click', () => { close(true); location.hash = '/plan'; });
       content.prepend(toPlan);
@@ -320,6 +329,9 @@ async function hydrate() {
         // Los espacios primero: sin espacio activo no se sabe qué cargar
         if (!state.workspaceId) await loadWorkspaces();
         await loadAll();
+        // El saldo de los socios cruza espacios: en Personal hace falta para
+        // poder decir cuánto le debes al negocio. No bloquea la carga.
+        loadPartnerBalances().then(() => { if (!rendering) render(); });
       } catch (err) {
         loadError = err;
         toast(describeLoadError(err), 'err');

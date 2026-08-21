@@ -1,7 +1,9 @@
 import {
   el, esc, eur, eurSigned, pct, monthKey, monthLabel, todayISO, dayLabel, groupBy, sum, round2,
 } from '../utils.js';
-import { state, personalData, categoryById, accountById, isBusiness, closingForDate } from '../store.js';
+import {
+  state, personalData, categoryById, accountById, isBusiness, closingForDate, myBusinessDebt,
+} from '../store.js';
 import {
   monthTotals, categoryBreakdown, prevMonthPace, projection, missingRecurringIncomes,
 } from '../analysis.js';
@@ -11,6 +13,7 @@ import { openTransferSheet } from './accounts.js';
 import { accountsOverview } from '../accounts.js';
 import { planOverview } from '../plan.js';
 import { takings, monthResult, closingTotal } from '../closings.js';
+import { partnerBalances } from '../partners.js';
 import { workspacePill } from './workspaces.js';
 import { openClosingSheet } from './closings.js';
 import { openPaymentSheet } from './debts.js';
@@ -150,6 +153,7 @@ export function renderDashboard() {
         <div data-plan-strip></div>
         <div data-accounts-strip></div>
 
+        <div data-partner-strip></div>
         <div data-debt-strip></div>
         <div data-reminders class="stack"></div>
 
@@ -178,6 +182,56 @@ export function renderDashboard() {
       </div>
     </div>
   `);
+
+  /* --- socios ------------------------------------------------------------ */
+  const partnerStrip = screen.querySelector('[data-partner-strip]');
+
+  if (business) {
+    // En el negocio: cuánto ha sacado cada socio, que es la pregunta que se hace
+    const socios = partnerBalances(state, month);
+    if (socios.active) {
+      const strip = el(`
+        <a href="#/socios" class="card" style="text-decoration:none;color:inherit;padding:14px 16px;display:block">
+          <div class="row-between">
+            <span class="tiny muted">Han sacado los socios</span>
+            <span class="tiny muted">${socios.drawnThisMonth > 0 ? `${eur(socios.drawnThisMonth)} este mes` : ''} ›</span>
+          </div>
+          <div class="stack" style="gap:8px;margin-top:10px" data-rows></div>
+        </a>
+      `);
+      const rows = strip.querySelector('[data-rows]');
+      for (const socio of socios.rows.filter((r) => r.movements)) {
+        rows.appendChild(el(`
+          <div class="row-between" style="gap:10px">
+            <span class="row" style="gap:8px;min-width:0">
+              <span class="dot" style="background:${esc(socio.color)};flex:none"></span>
+              <span class="truncate">${esc(socio.name)}</span>
+            </span>
+            <span class="num" style="font-weight:650">${eur(socio.balance)}</span>
+          </div>
+        `));
+      }
+      partnerStrip.appendChild(strip);
+    }
+  } else {
+    // En lo personal: lo que le debes tú al negocio, que vive en el otro espacio
+    const mio = myBusinessDebt();
+    if (mio && Math.abs(mio.balance) >= 0.01) {
+      partnerStrip.appendChild(el(`
+        <div class="card row-between" style="padding:14px 16px">
+          <span class="grow" style="min-width:0">
+            <span class="tiny muted" style="display:block">
+              ${mio.balance > 0 ? 'Le debes al negocio' : 'El negocio te debe'}
+            </span>
+            <span class="num" style="font-weight:700;font-size:18px">${eur(Math.abs(mio.balance))}</span>
+          </span>
+          <span class="tiny muted" style="text-align:right;max-width:45%">
+            De lo que has pagado con dinero del local
+          </span>
+        </div>
+      `));
+    }
+  }
 
   /* --- recordatorios ---------------------------------------------------- */
   const reminders = screen.querySelector('[data-reminders]');

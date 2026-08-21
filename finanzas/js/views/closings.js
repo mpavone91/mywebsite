@@ -1,6 +1,6 @@
 import { el, esc, eur, pct, monthKey, monthLabel, todayISO, dayLabel, toast, haptic } from '../utils.js';
 import { state, addClosing, updateClosing, deleteClosing, closingForDate } from '../store.js';
-import { takings, monthResult, closingTotal, METHODS } from '../closings.js';
+import { takings, monthResult, closingTotal, restDaysLabel, METHODS } from '../closings.js';
 import { openSheet, confirmSheet, emptyState } from '../ui.js';
 
 /* ================================================================ pantalla === */
@@ -31,7 +31,8 @@ export function renderClosings() {
       <div class="balance-value num pos">${eur(view.total)}</div>
       <div class="balance-sub">
         ${view.closings
-    ? `${view.closings} ${view.closings === 1 ? 'día con parte' : 'días con parte'} · media de <strong>${eur(view.average)}</strong> al día`
+    ? `${view.closings} ${view.closings === 1 ? 'día con parte' : 'días con parte'} · media de <strong>${eur(view.average)}</strong> al día${
+      view.closedWeekdays.length ? ` · cierra los ${restDaysLabel(view.closedWeekdays)}` : ''}`
     : 'Todavía no has apuntado ningún cierre este mes'}
       </div>
       ${view.total > 0 ? `
@@ -70,12 +71,15 @@ export function renderClosings() {
 
   /* --- aviso de partes que faltan --------------------------------------- */
   if (view.missing >= 3) {
+    const cierra = view.closedWeekdays.length
+      ? ` Los ${restDaysLabel(view.closedWeekdays)} no cuentan: el local no abre.`
+      : '';
     body.appendChild(el(`
       <div class="card insight is-warn">
         <div class="icon">📭</div>
         <div>
           <h3>Faltan ${view.missing} partes</h3>
-          <p>Del día 1 al ${view.daysElapsed} hay ${view.closings} cierres apuntados. Si el local abre a diario, la facturación del mes está incompleta.</p>
+          <p>Del día 1 al ${view.daysElapsed} el local ha abierto ${view.openElapsed} días y hay ${view.closings} cierres apuntados.${cierra}</p>
         </div>
       </div>
     `));

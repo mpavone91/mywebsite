@@ -1,4 +1,5 @@
-import { sum, round2, monthKey, daysInMonth, elapsedDays, eur, pct } from './utils.js';
+import { sum, round2, monthKey, daysInMonth, elapsedDays, todayISO, eur, pct } from './utils.js';
+import { businessExpenses } from './partners.js';
 
 /**
  * Cierres diarios del local.
@@ -23,6 +24,61 @@ export const METHODS = [
 export const closingTotal = (closing) =>
   round2(sum(METHODS, (m) => Number(closing[m.key]) || 0));
 
+const WEEKDAYS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+
+// Un día suelto sin parte es un olvido; un día de la semana entero sin un solo
+// parte, habiendo pasado ya varias veces, es que el local cierra ese día.
+const REST_DAY_MIN = 3;
+// Si cambió el horario hace meses, lo viejo no debe seguir mandando
+const REST_DAY_WINDOW = 90;
+
+const isoWeekday = (iso) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).getDay();
+};
+
+const addDays = (iso, n) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(y, m - 1, d + n);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+
+/**
+ * Los días de la semana que el local no abre, deducidos de los partes.
+ *
+ * No se pregunta ni se configura: si desde que se lleva el registro han pasado
+ * ya tres domingos y ninguno tiene parte, el local cierra los domingos. Un
+ * martes olvidado no cuenta, porque los demás martes sí tienen parte.
+ */
+export function restDays(closings, upTo = todayISO()) {
+  if (!closings.length) return [];
+
+  const dates = new Set(closings.map((c) => c.date));
+  const first = closings.reduce((a, c) => (c.date < a ? c.date : a), closings[0].date);
+  const from = first < addDays(upTo, -REST_DAY_WINDOW) ? addDays(upTo, -REST_DAY_WINDOW) : first;
+
+  const seen = [0, 0, 0, 0, 0, 0, 0];
+  const withParte = [0, 0, 0, 0, 0, 0, 0];
+  for (let day = from; day <= upTo; day = addDays(day, 1)) {
+    const wd = isoWeekday(day);
+    seen[wd] += 1;
+    if (dates.has(day)) withParte[wd] += 1;
+  }
+
+  return seen
+    .map((count, wd) => ({ wd, count, partes: withParte[wd] }))
+    .filter((d) => d.count >= REST_DAY_MIN && d.partes === 0)
+    .map((d) => d.wd);
+}
+
+/** "domingo" · "domingos y lunes" — para contarlo en castellano. */
+export function restDaysLabel(days) {
+  // "lunes" ya es plural; "domingo" y "sábado" no
+  const names = days.map((wd) => (WEEKDAYS[wd].endsWith('s') ? WEEKDAYS[wd] : `${WEEKDAYS[wd]}s`));
+  if (names.length <= 1) return names[0] || '';
+  return `${names.slice(0, -1).join(', ')} y ${names.at(-1)}`;
+}
+
 /** Facturación de un mes, con el peso de cada forma de cobro. */
 export function takings(closings, month = monthKey()) {
   const rows = closings
@@ -39,6 +95,19 @@ export function takings(closings, month = monthKey()) {
   const elapsed = Math.min(elapsedDays(month), days);
   const best = rows.reduce((a, b) => (!a || closingTotal(b) > closingTotal(a) ? b : a), null);
 
+  // Los días que el local cierra no son partes que falten, ni cuentan para la
+  // proyección: el mes tiene menos días de apertura, no menos facturación.
+  const closed = restDays(closings, `${month}-${String(elapsed || 1).padStart(2, '0')}`);
+  const openDays = (upTo) => {
+    let n = 0;
+    for (let d = 1; d <= upTo; d += 1) {
+      if (!closed.includes(isoWeekday(`${month}-${String(d).padStart(2, '0')}`))) n += 1;
+    }
+    return n;
+  };
+  const openElapsed = openDays(elapsed);
+  const openTotal = openDays(days);
+
   return {
     month,
     rows,
@@ -50,27 +119,39 @@ export function takings(closings, month = monthKey()) {
     best,
     daysElapsed: elapsed,
     daysTotal: days,
-    // Proyección a fin de mes al ritmo de los días que llevan parte
+    // Días de la semana que el local no abre, y los días de apertura que salen
+    closedWeekdays: closed,
+    openElapsed,
+    openTotal,
+    // Proyección a fin de mes: la media de un día abierto por los que quedan
     projected: rows.length && elapsed > 0 && elapsed < days
-      ? round2((total / rows.length) * days * (rows.length / elapsed))
+      ? round2((total / rows.length) * openTotal)
       : null,
-    // Días del mes ya pasados sin parte: puede ser cierre semanal o un olvido
-    missing: Math.max(elapsed - rows.length, 0),
+    // Días de apertura ya pasados sin parte. Los de cierre no cuentan: no
+    // falta el parte del domingo si el domingo el local no abre.
+    missing: Math.max(openElapsed - rows.length, 0),
   };
 }
 
 /** Resultado del mes: facturación menos gastos. */
 export function monthResult(closings, expenses, month = monthKey()) {
   const income = takings(closings, month).total;
-  const spent = round2(sum(
-    expenses.filter((e) => e.date.slice(0, 7) === month), (e) => e.amount,
-  ));
+  const ofMonth = expenses.filter((e) => e.date.slice(0, 7) === month);
+
+  // Lo que un socio saca para sí no es un gasto del local: es un préstamo. Si
+  // contara aquí, el resultado del mes bajaría por algo que el negocio no ha
+  // consumido, y dejaría de servir para saber si el local gana dinero.
+  const spent = round2(sum(businessExpenses(ofMonth), (e) => e.amount));
+  const drawn = round2(sum(ofMonth.filter((e) => e.partner_id), (e) => e.amount));
 
   return {
     income,
     expense: spent,
+    drawn,
     result: round2(income - spent),
     margin: income > 0 ? (income - spent) / income : null,
+    // Lo que de verdad ha quedado en caja este mes, retiradas incluidas
+    cash: round2(income - spent - drawn),
   };
 }
 
@@ -98,12 +179,15 @@ export function closingInsights({ closings = [], expenses = [] }, month = monthK
   });
 
   if (view.missing >= 3) {
+    const cierra = view.closedWeekdays.length
+      ? ` (sin contar los ${restDaysLabel(view.closedWeekdays)}, que el local no abre)`
+      : '';
     out.push({
       id: 'closings-missing',
       level: 'warn',
       icon: '📭',
       title: `Faltan ${view.missing} partes por registrar`,
-      body: `Del día 1 al ${view.daysElapsed} hay ${view.closings} cierres apuntados. Si el local abre a diario, la facturación del mes está incompleta.`,
+      body: `Del día 1 al ${view.daysElapsed} el local ha abierto ${view.openElapsed} días${cierra} y hay ${view.closings} cierres apuntados. La facturación del mes está incompleta.`,
       action: 'Los días sin parte no cuentan en la media ni en la proyección.',
     });
   }
