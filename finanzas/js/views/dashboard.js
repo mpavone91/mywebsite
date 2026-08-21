@@ -14,6 +14,7 @@ import { accountsOverview } from '../accounts.js';
 import { planOverview } from '../plan.js';
 import { takings, monthResult, closingTotal } from '../closings.js';
 import { partnerBalances } from '../partners.js';
+import { breakEven } from '../breakeven.js';
 import { workspacePill } from './workspaces.js';
 import { openClosingSheet } from './closings.js';
 import { openPaymentSheet } from './debts.js';
@@ -185,6 +186,41 @@ export function renderDashboard() {
 
   /* --- socios ------------------------------------------------------------ */
   const partnerStrip = screen.querySelector('[data-partner-strip]');
+
+  // Cuánto hay que facturar para cubrir el mes: es la cifra que se busca de un
+  // vistazo, antes que cualquier otra.
+  if (business) {
+    const meta = breakEven(
+      { ...state, profitGoal: Number(state.workspaces.find((w) => w.id === state.workspaceId)?.profit_goal || 0) },
+      month,
+    );
+    if (meta.minimum > 0) {
+      const cubierto = meta.overMinimum >= 0;
+      partnerStrip.appendChild(el(`
+        <a href="#/plan" class="card" style="text-decoration:none;color:inherit;padding:14px 16px;display:block">
+          <div class="row-between">
+            <span class="tiny muted">Para cubrir ${monthLabel(month, { short: true })} hay que facturar</span>
+            <span class="muted">›</span>
+          </div>
+          <div class="row-between" style="margin-top:4px">
+            <span class="num" style="font-weight:700;font-size:18px">${eur(meta.minimum)}</span>
+            <span class="small ${cubierto ? 'pos' : ''}" style="font-weight:600">
+              ${cubierto ? `+${eur(meta.overMinimum)}` : `faltan ${eur(meta.missingToMinimum)}`}
+            </span>
+          </div>
+          <div class="bar" style="margin-top:8px">
+            <i style="width:${Math.min((meta.coverage || 0) * 100, 100).toFixed(1)}%;
+                      background:${cubierto ? 'var(--pos)' : 'var(--accent)'}"></i>
+          </div>
+          <div class="tiny muted" style="margin-top:6px">
+            ${eur(meta.minimumPerDay)} por día abierto${meta.profitGoal > 0
+    ? ` · ${eur(meta.targetPerDay)} para ganar ${eur(meta.profitGoal)}`
+    : ''}
+          </div>
+        </a>
+      `));
+    }
+  }
 
   if (business) {
     // En el negocio: cuánto ha sacado cada socio, que es la pregunta que se hace

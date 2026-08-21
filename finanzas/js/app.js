@@ -17,6 +17,7 @@ import { renderAccounts } from './views/accounts.js';
 import { renderPlan } from './views/plan.js';
 import { renderClosings } from './views/closings.js';
 import { renderPartners } from './views/partners.js';
+import { renderExpenses } from './views/expenses.js';
 import { openWorkspaceSheet } from './views/workspaces.js';
 import { renderAuth, accountSheetContent } from './views/auth.js';
 import { renderLockScreen, openLockSetupSheet, lockSettings } from './views/lock.js';
@@ -35,6 +36,7 @@ const ROUTES = {
   '/plan': { title: 'Plan', render: renderPlan },
   '/cierres': { title: 'Cierres', render: renderClosings },
   '/socios': { title: 'Socios', render: renderPartners },
+  '/gastos-negocio': { title: 'Gastos', render: renderExpenses },
   '/cuentas': { title: 'Cuentas', render: renderAccounts },
   '/deudas': { title: 'Deudas', render: renderDebts },
   '/analisis': { title: 'Análisis', render: renderAnalysis },
@@ -54,6 +56,7 @@ const ICONS = {
   '/plan': '<path d="M4 4h16v16H4zM8 3v3M16 3v3M4 10h16M8 14h3M8 17h6"/>',
   '/cierres': '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6"/>',
   '/socios': '<path d="M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1M17 11a3 3 0 1 0-1-5.8M21 20v-1a5 5 0 0 0-3-4.6"/>',
+  '/gastos-negocio': '<path d="M3 6h18v12H3zM3 10h18M7 14h4M17 14h.01"/>',
   '/cuentas': '<path d="M3 21h18M4 21V10l8-6 8 6v11M9 21v-6h6v6"/>',
   '/deudas': '<path d="M3 7h18v11H3zM3 11h18M7 15h3"/>',
   '/analisis': '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
@@ -162,7 +165,7 @@ function navBar(active) {
     <nav class="nav">
       ${item('/', 'Hoy')}
       ${isBusiness() ? item('/cierres', 'Cierres') : item('/plan', 'Plan')}
-      ${item('/cuentas', 'Cuentas')}
+      ${isBusiness() ? item('/gastos-negocio', 'Gastos') : item('/cuentas', 'Cuentas')}
       ${isBusiness() ? item('/socios', 'Socios') : item('/deudas', 'Deudas')}
       ${item('/analisis', 'Análisis')}
       ${item('/historico', 'Histórico')}
@@ -256,9 +259,13 @@ function openAccountSheet() {
     });
     content.prepend(toWorkspaces);
 
-    // En un espacio de empresa la barra lleva Cierres y Socios, así que Plan y
-    // Deudas se alcanzan desde aquí: siguen estando, sólo cambian de sitio.
+    // En un espacio de empresa la barra lleva Cierres, Gastos y Socios; Plan,
+    // Deudas y Cuentas se alcanzan desde aquí: siguen estando, cambian de sitio.
     if (isBusiness()) {
+      const toAccounts = el('<button class="btn btn-block" data-accounts>Cuentas del negocio</button>');
+      toAccounts.addEventListener('click', () => { close(true); location.hash = '/cuentas'; });
+      content.prepend(toAccounts);
+
       const toDebts = el('<button class="btn btn-block" data-debts>Deudas del negocio</button>');
       toDebts.addEventListener('click', () => { close(true); location.hash = '/deudas'; });
       content.prepend(toDebts);

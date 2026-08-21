@@ -45,8 +45,9 @@ Las migraciones están en `supabase/migrations/` y se aplican en orden:
 | `0012_daily_closings.sql` | Cierres diarios del local, cuentas de cobro y `create_business_workspace()` |
 | `0013_closing_reserva.sql` | Cuarta forma de cobro en el parte: Reserva |
 | `0014_partners.sql` | Socios, su cuenta corriente con el negocio y la vista `partner_balances` |
+| `0015_business_goal.sql` | Objetivo de ganancia por espacio y categoría `Nóminas` en el negocio |
 
-Para recrear el proyecto desde cero, ejecuta los catorce archivos por orden en el SQL Editor
+Para recrear el proyecto desde cero, ejecuta los quince archivos por orden en el SQL Editor
 de Supabase y cambia `SUPABASE_URL` / `SUPABASE_KEY` en `js/config.js`.
 
 ### 2. Crear tu usuario
@@ -94,7 +95,7 @@ con el formulario ya desplegado.
 ## Modelo de datos
 
 ```
-workspaces    (id, user_id, name, kind, color, is_default, created_at)
+workspaces    (id, user_id, name, kind, color, is_default, profit_goal, created_at)
 categories    (id, user_id, name, type, color, bucket, is_archived, created_at)
 incomes       (id, user_id, amount, category_id, source, date, is_recurring, created_at)
 expenses      (id, user_id, amount, category_id, note,   date, is_recurring, created_at)
@@ -359,6 +360,53 @@ por buena una facturación incompleta.
 
 ---
 
+## Cuánto hay que facturar
+
+La pregunta del negocio no es la de lo personal. En casa el ingreso es fijo y el gasto
+variable, así que la pantalla *Plan* dice **cuánto queda libre**. En el local pasa lo
+contrario: el gasto es lo previsible —alquiler, nóminas, suministros— y la facturación lo que
+hay que salir a buscar cada día. Por eso en un espacio de empresa el *Plan* se da la vuelta y
+no pide ingresos fijos: no los hay.
+
+```
+mínimo   = gastos fijos declarados + gastos variables reales del mes
+objetivo = mínimo + lo que quieres ganar (profit_goal)
+al día   = cada uno repartido entre los días que el local abre
+```
+
+Los días de apertura salen de la deducción de los días de cierre (arriba), así que un local
+que cierra los domingos ve el reparto entre 26 días y no entre 31.
+
+Un fijo ya pagado no se cuenta dos veces: si hay un gasto en su categoría y por su importe
+(±5 %), ese gasto **es** el fijo, se acordara uno de marcarlo como recurrente o no.
+
+### De lo facturado, adónde va
+
+La pantalla *Gastos* lleva el reparto que contesta al desconcierto de facturar mucho y no ver
+el dinero:
+
+```
+facturado − gastos fijos − gastos variables − retiradas de socios = lo que queda
+```
+
+Las retiradas aparecen aquí aunque no sean gasto del local: salen de la misma caja, y son
+justamente lo que descuadra la facturación con el saldo del banco. Cuando quedan fijos por
+pagar, la tarjeta lo dice, para que no parezca que las cifras no suman.
+
+El resto de la pantalla contesta las otras dos preguntas: **en qué se gasta más** (desglose
+por categoría con su peso) y **qué día se gasta** (los movimientos agrupados por día, con el
+total de cada uno y el día más caro señalado).
+
+### El análisis en un negocio
+
+Las reglas de finanzas personales —tasa de ahorro, 50/30/20, fondo de emergencia, gasto
+hormiga— se ocultan en un espacio de empresa: en un local no dicen nada y ocupan el sitio de
+lo que sí importa. Y con un plan de gastos fijos declarado, la tarjeta de *resultado del mes*
+(que sólo cuenta lo ya apuntado) deja paso a la del mínimo a facturar, que cuenta el mes
+entero; si no, parecerían contradecirse.
+
+---
+
 ## Socios: la cuenta corriente con el negocio
 
 Cuando un socio paga algo suyo con dinero del negocio, el negocio no ha gastado: ha
@@ -441,13 +489,14 @@ finanzas/
 │   ├── debts.js              motor de deudas: amortización y estrategias de salida
 │   ├── closings.js           motor de cierres: facturación, media y resultado del mes
 │   ├── partners.js           motor de socios: retiradas, aportaciones y saldos
+│   ├── breakeven.js          cuánto hay que facturar para cubrir y para ganar
 │   ├── lock.js               acceso con PIN / huella y cifrado de la sesión
 │   ├── charts.js             envoltorio de Chart.js
 │   ├── ui.js                 paneles inferiores, confirmaciones, estados de carga
 │   ├── app.js                router y navegación
 │   └── views/                dashboard · add-movement · debts · analysis · history
 │                             categories · accounts · plan · closings · workspaces
-│                             partners · auth · lock
+│                             partners · expenses · auth · lock
 ├── vendor/                   supabase-js y chart.js con la versión fijada
 └── supabase/migrations/
 ```

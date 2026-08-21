@@ -147,8 +147,10 @@ export function findRegistered(item, month, { expenses, incomes }) {
 
   if (!item.category_id) return null;
   const target = declaredMonthly(item);
+  // Sin exigir que esté marcado como recurrente: un gasto en la categoría del
+  // apunte y por su importe es ese apunte, se acordara uno de marcarlo o no. La
+  // ventana del 5 % es lo bastante estrecha para no llevarse otro por delante.
   return rows.find((r) => r.category_id === item.category_id
-    && r.is_recurring
     && Math.abs(r.amount - target) <= Math.max(target * 0.05, 1)) || null;
 }
 

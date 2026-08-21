@@ -171,6 +171,17 @@ export async function createBusinessWorkspace(name) {
   return data;
 }
 
+/** Lo que el dueño quiere ganar al mes con este negocio. */
+export async function setProfitGoal(value) {
+  const { data, error } = await supabase
+    .from('workspaces').update({ profit_goal: round2(value) })
+    .eq('id', state.workspaceId).select().single();
+  if (error) throw error;
+  state.workspaces = state.workspaces.map((w) => (w.id === data.id ? data : w));
+  emit();
+  return data;
+}
+
 export async function renameWorkspace(id, name) {
   const { data, error } = await supabase
     .from('workspaces').update({ name: name.trim() }).eq('id', id).select().single();
