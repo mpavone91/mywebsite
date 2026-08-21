@@ -48,15 +48,18 @@ function categoryChips(categories, selectedId = null) {
 
 /* ------------------------------------------------------------ alta gasto --- */
 
-export function openExpenseSheet({ movement = null, onSaved } = {}) {
+export function openExpenseSheet({ movement = null, prefill = null, onSaved } = {}) {
   const editing = Boolean(movement);
   const cats = frequentExpenseCategories();
   let keypad;
 
   return openSheet(editing ? 'Editar gasto' : 'Nuevo gasto', (close) => {
+    // `prefill` deja todo puesto menos el importe: es lo que usa el plan para
+    // los gastos que varían cada mes, donde la cifra sale de la factura real.
+    const initial = movement || prefill;
     keypad = amountKeypad(editing ? Math.round(movement.amount * 100) : 0);
-    const chips = categoryChips(cats, movement?.category_id ?? null);
-    const accounts = accountChips(movement?.account_id ?? rememberedAccount('expense'));
+    const chips = categoryChips(cats, initial?.category_id ?? null);
+    const accounts = accountChips(initial?.account_id ?? rememberedAccount('expense'));
 
     const body = el(`
       <div class="stack">
@@ -69,24 +72,24 @@ export function openExpenseSheet({ movement = null, onSaved } = {}) {
           <div class="section-title">Pagado desde</div>
           <div data-accounts></div>
         </div>
-        <details data-more ${editing ? 'open' : ''}>
+        <details data-more ${editing || prefill ? 'open' : ''}>
           <summary class="muted small" style="cursor:pointer;padding:8px 0">Fecha, nota y recurrencia</summary>
           <div class="stack" style="padding-top:8px">
             <label class="field">
               <span>Fecha</span>
-              <input type="date" data-date value="${esc(movement?.date || todayISO())}">
+              <input type="date" data-date value="${esc(initial?.date || todayISO())}">
             </label>
             <label class="field">
               <span>Nota (opcional)</span>
               <input type="text" data-note maxlength="120" placeholder="Ej. Netflix, cena fuera…"
-                     value="${esc(movement?.note || '')}">
+                     value="${esc(initial?.note || '')}">
             </label>
             <label class="switch card" style="padding:12px 14px">
               <span>
                 <strong style="font-size:15px">Gasto recurrente</strong>
                 <span class="tiny muted" style="display:block">Suscripciones, alquiler, cuotas…</span>
               </span>
-              <input type="checkbox" data-recurring ${movement?.is_recurring ? 'checked' : ''}>
+              <input type="checkbox" data-recurring ${initial?.is_recurring ? 'checked' : ''}>
             </label>
           </div>
         </details>

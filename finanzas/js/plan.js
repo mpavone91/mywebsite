@@ -29,19 +29,112 @@ export const FREQUENCIES = [
 export const frequencyMeta = (value) =>
   FREQUENCIES.find((f) => f.value === value) || FREQUENCIES[0];
 
-/** Lo que supone al mes un apunte, sea cual sea su periodicidad. */
-export function monthlyAmount(item) {
+/** Lo declarado, llevado a su equivalente mensual. */
+export function declaredMonthly(item) {
   return round2(Number(item.amount) * frequencyMeta(item.frequency).factor);
 }
 
-/* --------------------------------------------------------- correspondencia --- */
+/**
+ * Lo que supone al mes un apunte.
+ * Con `estimate` (de estimateItem) devuelve la media real cuando la hay; sin
+ * él, el importe declarado. Se mantiene el nombre porque es lo que usan las
+ * vistas y la mayoría de apuntes son de importe fijo.
+ */
+export function monthlyAmount(item, estimate = null) {
+  if (estimate && estimate.source === 'average') return estimate.monthly;
+  return declaredMonthly(item);
+}
+
+/* ------------------------------------------------------- importe variable --- */
 
 const normalize = (text) => (text || '').trim().toLowerCase();
 
 /**
- * ¿Ya está registrado este mes el movimiento de un apunte fijo?
+ * ¿Este movimiento es de los que alimentan el apunte?
  *
- * Se busca primero por nombre, que es lo que escribe la app al registrarlo
+ * Se reconoce por la palabra clave en la nota (o la fuente, si es un ingreso).
+ * A propósito NO vale sólo la categoría: "Luz" y "Alquiler" suelen compartir
+ * categoría, y mezclarlos daría una media sin sentido.
+ */
+export function matchesItem(item, row) {
+  const key = normalize(item.match_text || item.name);
+  if (!key) return false;
+  const text = normalize(item.kind === 'income' ? row.source : row.note);
+  return Boolean(text) && text.includes(key);
+}
+
+/**
+ * Media mensual real de un apunte variable.
+ *
+ * Se suma todo lo registrado en la ventana y se reparte entre los meses que
+ * abarca de verdad — desde el primer movimiento encontrado —, no entre los
+ * meses pedidos. Así una factura que llega cada dos meses da su equivalente
+ * mensual correcto, y quien lleva sólo dos meses registrando no ve su media
+ * dividida entre seis.
+ *
+ * La ventana termina en el mes anterior: el mes en curso está a medias y
+ * arrastraría la media hacia abajo.
+ */
+export function averageFor(item, { expenses, incomes }, month = monthKey()) {
+  const rows = (item.kind === 'income' ? incomes : expenses).filter((r) => matchesItem(item, r));
+  if (!rows.length) return null;
+
+  const lookback = Math.max(Number(item.lookback_months) || 6, 2);
+  const window = Array.from({ length: lookback }, (_, i) => shiftMonth(month, -(i + 1)));
+  const oldest = window[window.length - 1];
+  const newest = window[0];
+
+  const inWindow = rows.filter((r) => {
+    const m = r.date.slice(0, 7);
+    return m >= oldest && m <= newest;
+  });
+  if (!inWindow.length) return null;
+
+  const months = [...new Set(inWindow.map((r) => r.date.slice(0, 7)))].sort();
+  const firstMonth = months[0];
+  // Meses que abarca de verdad, del primer registro al último mes cerrado
+  const span = window.filter((m) => m >= firstMonth).length || 1;
+
+  const total = round2(sum(inWindow, (r) => r.amount));
+  const perMonth = months.map((m) => round2(sum(
+    inWindow.filter((r) => r.date.slice(0, 7) === m), (r) => r.amount,
+  )));
+
+  return {
+    monthly: round2(total / span),
+    total,
+    span,
+    count: inWindow.length,
+    monthsWithData: months.length,
+    min: round2(Math.min(...perMonth)),
+    max: round2(Math.max(...perMonth)),
+    lastMonth: months[months.length - 1],
+  };
+}
+
+/**
+ * Importe con el que entra un apunte en el plan, y de dónde sale.
+ * Un apunte variable sin histórico todavía cae en el importe declarado, para
+ * que el plan enseñe algo mientras se acumulan registros.
+ */
+export function estimateItem(item, data, month = monthKey()) {
+  if (item.amount_mode !== 'average') {
+    return { monthly: declaredMonthly(item), source: 'fixed', stats: null };
+  }
+
+  const stats = averageFor(item, data, month);
+  if (!stats) {
+    return { monthly: declaredMonthly(item), source: 'estimate', stats: null };
+  }
+  return { monthly: stats.monthly, source: 'average', stats };
+}
+
+/* --------------------------------------------------------- correspondencia --- */
+
+/**
+ * ¿Ya está registrado este mes el movimiento de un apunte?
+ *
+ * Primero por la palabra clave, que es lo que escribe la app al registrarlo
  * desde el plan. Como respaldo vale un movimiento recurrente de la misma
  * categoría por un importe parecido, para reconocer lo que se apuntó a mano.
  */
@@ -49,12 +142,11 @@ export function findRegistered(item, month, { expenses, incomes }) {
   const rows = (item.kind === 'income' ? incomes : expenses)
     .filter((r) => r.date.slice(0, 7) === month);
 
-  const name = normalize(item.name);
-  const byName = rows.find((r) => normalize(item.kind === 'income' ? r.source : r.note) === name);
-  if (byName) return byName;
+  const byText = rows.find((r) => matchesItem(item, r));
+  if (byText) return byText;
 
   if (!item.category_id) return null;
-  const target = monthlyAmount(item);
+  const target = declaredMonthly(item);
   return rows.find((r) => r.category_id === item.category_id
     && r.is_recurring
     && Math.abs(r.amount - target) <= Math.max(target * 0.05, 1)) || null;
@@ -73,11 +165,15 @@ export function planOverview(data, month = monthKey()) {
   } = data;
 
   const active = fixedItems.filter((f) => f.is_active);
-  const decorate = (item) => ({
-    ...item,
-    monthly: monthlyAmount(item),
-    registered: findRegistered(item, month, { expenses, incomes }),
-  });
+  const decorate = (item) => {
+    const estimate = estimateItem(item, { expenses, incomes }, month);
+    return {
+      ...item,
+      monthly: estimate.monthly,
+      estimate,
+      registered: findRegistered(item, month, { expenses, incomes }),
+    };
+  };
 
   const fixedIncomes = active.filter((f) => f.kind === 'income').map(decorate);
   const fixedExpenses = active.filter((f) => f.kind === 'expense').map(decorate);

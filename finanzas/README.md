@@ -37,8 +37,9 @@ Las migraciones están en `supabase/migrations/` y se aplican en orden:
 | `0006_accounts.sql` | Cuentas (bancos), traspasos, `account_id` en gastos e ingresos + vista `account_balances` |
 | `0007_generic_seed.sql` | Categorías sembradas genéricas (sin nombres propios) y limpieza de las ya creadas |
 | `0008_fixed_items.sql` | Plan mensual: ingresos y gastos fijos + vista `fixed_items_monthly` |
+| `0009_variable_fixed_items.sql` | Apuntes del plan con importe variable (media de lo registrado) |
 
-Para recrear el proyecto desde cero, ejecuta los ocho archivos por orden en el SQL Editor
+Para recrear el proyecto desde cero, ejecuta los nueve archivos por orden en el SQL Editor
 de Supabase y cambia `SUPABASE_URL` / `SUPABASE_KEY` en `js/config.js`.
 
 ### 2. Crear tu usuario
@@ -95,8 +96,9 @@ debt_payments (id, user_id, debt_id, amount, date, expense_id, note, created_at)
 accounts      (id, user_id, name, kind, color, opening_balance, counts_as_personal,
                is_default, is_archived, note, created_at)
 transfers     (id, user_id, from_account_id, to_account_id, amount, date, note, created_at)
-fixed_items   (id, user_id, kind, name, amount, frequency, category_id, account_id,
-               day_of_month, is_active, note, created_at)
+fixed_items   (id, user_id, kind, name, amount, frequency, amount_mode, match_text,
+               lookback_months, category_id, account_id, day_of_month, is_active,
+               note, created_at)
 ```
 
 `expenses` e `incomes` llevan además un `account_id` opcional. Nulo significa "sin asignar"
@@ -239,9 +241,9 @@ ingresos fijos − gastos fijos − cuotas de deuda = margen del mes
 - **La periodicidad se guarda tal cual.** Un seguro de 480 € al año se apunta como anual y se
   muestra como 40 €/mes. Guardar ya la división obligaría a recordar el importe real cada vez
   que hubiera que revisarlo.
-- **Ingreso fijo a partir del histórico.** Para una nómina que varía cada mes, el formulario
-  ofrece la media de los meses ya registrados, con su mínimo y su máximo. Sólo cuenta los
-  meses con datos: un mes a cero suele significar "no lo apunté", no "no cobré".
+- **Importe fijo o variable.** Un alquiler es siempre el mismo; la luz, una nómina con
+  comisiones o lo que reparte un negocio, no. Con `amount_mode = 'average'` el importe deja
+  de escribirse y sale de la media de lo que se haya registrado de verdad.
 - **Fijos pendientes.** El plan reconoce cuáles ya tienen movimiento este mes y cuáles no, y
   los que faltan se registran de un toque con su importe ya puesto. El emparejamiento va por
   nombre, y como respaldo por categoría + recurrente + importe parecido (±5 %), para
@@ -251,6 +253,31 @@ ingresos fijos − gastos fijos − cuotas de deuda = margen del mes
 
 Si los fijos superan a los ingresos, la pantalla deja de hablar de margen y dice directamente
 cuánto habría que ingresar de más al mes para quedarse a cero.
+
+### Cómo se calcula una media
+
+El apunte guarda una **palabra clave** (por defecto su nombre) que se busca en la nota de
+cada gasto o en la fuente de cada ingreso. A propósito no vale sólo la categoría: "Luz" y
+"Alquiler" suelen compartirla, y mezclarlos daría una media sin sentido.
+
+Con los movimientos encontrados en la ventana elegida (3, 6 o 12 meses):
+
+```
+media mensual = total registrado ÷ meses que abarca de verdad
+```
+
+"Meses que abarca de verdad" va desde el primer movimiento encontrado, no desde el principio
+de la ventana. Así una factura que llega cada dos meses da su equivalente mensual correcto, y
+quien lleva sólo dos meses registrando no ve su media dividida entre seis. La ventana termina
+en el mes anterior: el mes en curso está a medias y arrastraría la media hacia abajo.
+
+Mientras no haya ningún movimiento que encaje, el plan usa el importe declarado como
+estimación y lo dice en la lista. El formulario enseña en vivo cuántos movimientos reconoce y
+qué media sale, para poder ajustar la palabra clave antes de guardar.
+
+Un apunte variable pendiente no se registra de un toque — su importe sale de la factura real —:
+abre el formulario con la categoría, la cuenta y la nota puestas, y sólo hay que teclear la
+cifra.
 
 ---
 
