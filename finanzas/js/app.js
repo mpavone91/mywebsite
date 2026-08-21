@@ -2,6 +2,7 @@ import { el, toast } from './utils.js';
 import {
   state, getSession, onAuthChange, loadAll, subscribe, signOut,
   lockSession, restoreSession, currentSession, describeLoadError,
+  loadWorkspaces, isBusiness,
 } from './store.js';
 import { destroyCharts } from './charts.js';
 import { openSheet, skeletonScreen } from './ui.js';
@@ -14,6 +15,8 @@ import { renderCategories } from './views/categories.js';
 import { renderDebts } from './views/debts.js';
 import { renderAccounts } from './views/accounts.js';
 import { renderPlan } from './views/plan.js';
+import { renderClosings } from './views/closings.js';
+import { openWorkspaceSheet } from './views/workspaces.js';
 import { renderAuth, accountSheetContent } from './views/auth.js';
 import { renderLockScreen, openLockSetupSheet, lockSettings } from './views/lock.js';
 import { openExpenseSheet, openIncomeSheet } from './views/add-movement.js';
@@ -29,6 +32,7 @@ const ASKED_KEY = 'finanzas.lock.asked';
 const ROUTES = {
   '/': { title: 'Hoy', render: renderDashboard },
   '/plan': { title: 'Plan', render: renderPlan },
+  '/cierres': { title: 'Cierres', render: renderClosings },
   '/cuentas': { title: 'Cuentas', render: renderAccounts },
   '/deudas': { title: 'Deudas', render: renderDebts },
   '/analisis': { title: 'Análisis', render: renderAnalysis },
@@ -46,6 +50,7 @@ const SHORTCUTS = {
 const ICONS = {
   '/': '<path d="M3 10.5 12 3l9 7.5M5.5 9.5V20h13V9.5"/>',
   '/plan': '<path d="M4 4h16v16H4zM8 3v3M16 3v3M4 10h16M8 14h3M8 17h6"/>',
+  '/cierres': '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6"/>',
   '/cuentas': '<path d="M3 21h18M4 21V10l8-6 8 6v11M9 21v-6h6v6"/>',
   '/deudas': '<path d="M3 7h18v11H3zM3 11h18M7 15h3"/>',
   '/analisis': '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
@@ -153,7 +158,7 @@ function navBar(active) {
   return el(`
     <nav class="nav">
       ${item('/', 'Hoy')}
-      ${item('/plan', 'Plan')}
+      ${isBusiness() ? item('/cierres', 'Cierres') : item('/plan', 'Plan')}
       ${item('/cuentas', 'Cuentas')}
       ${item('/deudas', 'Deudas')}
       ${item('/analisis', 'Análisis')}
@@ -241,6 +246,19 @@ function openAccountSheet() {
 
     // Categorías salió de la barra al entrar Cuentas: se gestionan de aquí,
     // que es donde uno va cuando quiere configurar algo.
+    const toWorkspaces = el('<button class="btn btn-block" data-workspaces>Cambiar de espacio</button>');
+    toWorkspaces.addEventListener('click', () => {
+      close(true);
+      openWorkspaceSheet({ onSwitch: reloadWorkspace });
+    });
+    content.prepend(toWorkspaces);
+
+    if (isBusiness()) {
+      const toPlan = el('<button class="btn btn-block" data-plan>Plan de gastos fijos</button>');
+      toPlan.addEventListener('click', () => { close(true); location.hash = '/plan'; });
+      content.prepend(toPlan);
+    }
+
     const toCategories = el('<button class="btn btn-block" data-categories>Gestionar categorías</button>');
     toCategories.addEventListener('click', () => {
       close(true);
@@ -265,6 +283,7 @@ function openAccountSheet() {
   });
 }
 document.addEventListener('open-account', openAccountSheet);
+document.addEventListener('switch-workspace', () => { reloadWorkspace(); });
 
 /* ---------------------------------------------------------------- arranque --- */
 
@@ -283,6 +302,13 @@ function handleShortcut() {
 // realimentaba el propio evento y acababa en un bucle de repintados.
 let hydrating = false;
 
+/** Cambiar de espacio recarga la contabilidad entera y vuelve a la home. */
+async function reloadWorkspace() {
+  history.replaceState(null, '', '#/');
+  render();
+  await hydrate();
+}
+
 async function hydrate() {
   if (hydrating) return;
   hydrating = true;
@@ -291,6 +317,8 @@ async function hydrate() {
       loadError = null;
       render();
       try {
+        // Los espacios primero: sin espacio activo no se sabe qué cargar
+        if (!state.workspaceId) await loadWorkspaces();
         await loadAll();
       } catch (err) {
         loadError = err;

@@ -1,7 +1,7 @@
 import {
   el, esc, eur, eurSigned, pct, monthKey, monthLabel, todayISO, dayLabel, groupBy, sum, round2,
 } from '../utils.js';
-import { state, personalData, categoryById, accountById } from '../store.js';
+import { state, personalData, categoryById, accountById, isBusiness, closingForDate } from '../store.js';
 import {
   monthTotals, categoryBreakdown, prevMonthPace, projection, missingRecurringIncomes,
 } from '../analysis.js';
@@ -10,6 +10,9 @@ import { openExpenseSheet, openIncomeSheet } from './add-movement.js';
 import { openTransferSheet } from './accounts.js';
 import { accountsOverview } from '../accounts.js';
 import { planOverview } from '../plan.js';
+import { takings, monthResult } from '../closings.js';
+import { workspacePill } from './workspaces.js';
+import { openClosingSheet } from './closings.js';
 import { openPaymentSheet } from './debts.js';
 import { debtsOverview, daysUntil, simulatePayoff } from '../debts.js';
 import { emptyState } from '../ui.js';
@@ -21,6 +24,12 @@ export function renderDashboard() {
   // Sólo lo que sale de tu bolsillo: el dinero del negocio va aparte
   const { expenses, incomes, categories } = personalData();
   const accounts = accountsOverview(state, month);
+
+  const business = isBusiness();
+  const sales = takings(state.closings, month);
+  const result = monthResult(state.closings, state.expenses, month);
+  const hoyCierre = closingForDate(today);
+  const todayTakings = hoyCierre ? round2(hoyCierre.card + hoyCierre.online + hoyCierre.cash) : 0;
 
   const t = monthTotals(month, expenses, incomes);
   const rows = categoryBreakdown(month, expenses, categories);
@@ -47,11 +56,30 @@ export function renderDashboard() {
           <h1>${monthLabel(month)}</h1>
           <p>${dayLabel(today)} · ${t.expenseCount} ${t.expenseCount === 1 ? 'gasto' : 'gastos'} este mes</p>
         </div>
-        <button class="btn btn-ghost" data-account aria-label="Tu cuenta"
-                style="min-height:38px;padding:0 10px;font-size:20px">⚙︎</button>
+        <span class="row" style="gap:8px">
+          <span data-workspace></span>
+          <button class="btn btn-ghost" data-account aria-label="Tu cuenta"
+                  style="min-height:38px;padding:0 10px;font-size:20px">⚙︎</button>
+        </span>
       </div>
 
       <div class="stack">
+        ${business ? `
+        <div class="card balance-card">
+          <div class="balance-label">Resultado de ${monthLabel(month)}</div>
+          <div class="balance-value num ${result.result < 0 ? 'neg' : 'pos'}">${eur(result.result)}</div>
+          <div class="balance-sub">
+            ${eur(result.income)} facturados · ${eur(result.expense)} de gastos
+          </div>
+          <div class="bar" style="margin-top:12px">
+            <i style="width:${result.income > 0 ? Math.min((result.expense / result.income) * 100, 100).toFixed(1) : 0}%;
+                      background:${result.result < 0 ? 'var(--neg)' : 'var(--accent)'}"></i>
+          </div>
+          <div class="row-between tiny muted" style="margin-top:6px">
+            <span>${sales.closings} ${sales.closings === 1 ? 'día con parte' : 'días con parte'}</span>
+            <span>${result.margin !== null ? `margen ${pct(result.margin)}` : 'sin facturación'}</span>
+          </div>
+        </div>` : `
         <div class="card balance-card">
           <div class="balance-label">Gastado este mes</div>
           <div class="balance-value num ${overspending ? 'neg' : ''}">${eur(t.expense)}</div>
@@ -66,24 +94,49 @@ export function renderDashboard() {
             <span>${t.income > 0 ? `${pct(t.expense / t.income)} de tus ingresos` : 'Sin ingresos registrados'}</span>
             <span>${paceText}</span>
           </div>
-        </div>
+        </div>`}
 
         <div class="split">
+          ${business ? `
+          <div class="card stat">
+            <div class="k">Facturado hoy</div>
+            <div class="v num pos">${eur(todayTakings)}</div>
+            <div class="tiny muted">${hoyCierre ? 'parte apuntado' : 'sin parte todavía'}</div>
+          </div>` : `
           <div class="card stat">
             <div class="k">Saldo de hoy</div>
             <div class="v num ${todayBalance < 0 ? 'neg' : todayBalance > 0 ? 'pos' : ''}">${eurSigned(todayBalance)}</div>
             <div class="tiny muted">${eur(todayExpense)} gastado${todayIncome > 0 ? ` · ${eur(todayIncome)} ingresado` : ''}</div>
-          </div>
+          </div>`}
+          ${business ? `
+          <div class="card stat">
+            <div class="k">${sales.projected ? 'Facturación prevista' : 'Media por día'}</div>
+            <div class="v num">${sales.closings ? eur(sales.projected || sales.average, true) : '—'}</div>
+            <div class="tiny muted">${sales.closings
+    ? (sales.projected
+      ? `a ${eur(sales.average)} por día con parte`
+      : 'media de los días con parte')
+    : 'sin partes este mes'}</div>
+          </div>` : `
           <div class="card stat">
             <div class="k">${proj && !proj.isClosed ? 'Cierre previsto' : 'Media diaria'}</div>
             <div class="v num">${proj ? eur(proj.isClosed ? proj.perDay : proj.projected, true) : '—'}</div>
             <div class="tiny muted">${proj && !proj.isClosed
-              ? `a ${eur(proj.perDay)}/día · quedan ${proj.daysLeft} días`
-              : 'gasto medio por día'}</div>
-          </div>
+    ? `a ${eur(proj.perDay)}/día · quedan ${proj.daysLeft} días`
+    : 'gasto medio por día'}</div>
+          </div>`}
         </div>
 
         <div class="quick-actions">
+          ${business ? `
+          <button class="quick quick-expense" data-add-closing>
+            ${hoyCierre ? 'Cierre de hoy' : '+ Cierre'}
+            <small>${hoyCierre ? `Apuntado: ${eur(todayTakings)}` : 'Tarjeta, online y efectivo'}</small>
+          </button>
+          <button class="quick quick-income" data-add-expense>
+            + Gasto
+            <small>Del negocio</small>
+          </button>` : `
           <button class="quick quick-expense" data-add-expense>
             + Gasto
             <small>Importe, categoría, listo</small>
@@ -91,7 +144,7 @@ export function renderDashboard() {
           <button class="quick quick-income" data-add-income>
             + Ingreso
             <small>Nómina y otros</small>
-          </button>
+          </button>`}
         </div>
 
         <div data-plan-strip></div>
@@ -241,7 +294,13 @@ export function renderDashboard() {
   }
 
   screen.querySelector('[data-add-expense]').addEventListener('click', () => openExpenseSheet());
-  screen.querySelector('[data-add-income]').addEventListener('click', () => openIncomeSheet());
+  screen.querySelector('[data-add-income]')?.addEventListener('click', () => openIncomeSheet());
+  screen.querySelector('[data-add-closing]')?.addEventListener('click', () => {
+    openClosingSheet({ closing: hoyCierre });
+  });
+
+  const pill = workspacePill({ onSwitch: () => document.dispatchEvent(new CustomEvent('switch-workspace')) });
+  if (pill) screen.querySelector('[data-workspace]').appendChild(pill);
   screen.querySelector('[data-account]').addEventListener('click', () => {
     document.dispatchEvent(new CustomEvent('open-account'));
   });
