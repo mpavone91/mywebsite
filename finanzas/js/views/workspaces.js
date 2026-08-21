@@ -48,7 +48,7 @@ export function openWorkspaceSheet({ onSwitch } = {}) {
         ${hasBusiness ? '' : `
           <button class="btn btn-primary btn-block" data-new-business>+ Crear espacio de empresa</button>
           <p class="tiny muted" style="margin:0">
-            Viene con sus categorías de negocio y sus cuentas de cobro (TPV, online y caja),
+            Viene con sus categorías de negocio y sus cuentas de cobro (TPV, online, caja y reservas),
             listo para apuntar los cierres del día.
           </p>`}
       </div>
@@ -147,7 +147,7 @@ function openCreateBusinessSheet(onCreated) {
         </label>
         <div class="card" style="padding:12px 14px">
           <div class="tiny muted" style="margin-bottom:6px">Se crea con</div>
-          <div class="tiny">🏦 Cuentas de cobro: TPV / Tarjeta, Cobros online y Caja</div>
+          <div class="tiny">🏦 Cuentas de cobro: TPV / Tarjeta, Cobros online, Caja y Reservas</div>
           <div class="tiny">🏷️ Categorías: Proveedores, Personal, Alquiler, Suministros, Impuestos, Marketing, Mantenimiento</div>
           <div class="tiny">💶 Facturación y Otros ingresos</div>
         </div>

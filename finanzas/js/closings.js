@@ -13,10 +13,11 @@ export const METHODS = [
   { key: 'card', label: 'Tarjeta', icon: '💳', color: '#0ea5e9' },
   { key: 'online', label: 'Online', icon: '🌐', color: '#6366f1' },
   { key: 'cash', label: 'Efectivo', icon: '💵', color: '#78716c' },
+  { key: 'reserva', label: 'Reserva', icon: '📅', color: '#f59e0b' },
 ];
 
 export const closingTotal = (closing) =>
-  round2(Number(closing.card || 0) + Number(closing.online || 0) + Number(closing.cash || 0));
+  round2(sum(METHODS, (m) => Number(closing[m.key]) || 0));
 
 /** Facturación de un mes, con el peso de cada forma de cobro. */
 export function takings(closings, month = monthKey()) {

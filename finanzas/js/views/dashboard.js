@@ -10,7 +10,7 @@ import { openExpenseSheet, openIncomeSheet } from './add-movement.js';
 import { openTransferSheet } from './accounts.js';
 import { accountsOverview } from '../accounts.js';
 import { planOverview } from '../plan.js';
-import { takings, monthResult } from '../closings.js';
+import { takings, monthResult, closingTotal } from '../closings.js';
 import { workspacePill } from './workspaces.js';
 import { openClosingSheet } from './closings.js';
 import { openPaymentSheet } from './debts.js';
@@ -29,7 +29,7 @@ export function renderDashboard() {
   const sales = takings(state.closings, month);
   const result = monthResult(state.closings, state.expenses, month);
   const hoyCierre = closingForDate(today);
-  const todayTakings = hoyCierre ? round2(hoyCierre.card + hoyCierre.online + hoyCierre.cash) : 0;
+  const todayTakings = hoyCierre ? closingTotal(hoyCierre) : 0;
 
   const t = monthTotals(month, expenses, incomes);
   const rows = categoryBreakdown(month, expenses, categories);
@@ -131,7 +131,7 @@ export function renderDashboard() {
           ${business ? `
           <button class="quick quick-expense" data-add-closing>
             ${hoyCierre ? 'Cierre de hoy' : '+ Cierre'}
-            <small>${hoyCierre ? `Apuntado: ${eur(todayTakings)}` : 'Tarjeta, online y efectivo'}</small>
+            <small>${hoyCierre ? `Apuntado: ${eur(todayTakings)}` : 'El parte del día'}</small>
           </button>
           <button class="quick quick-income" data-add-expense>
             + Gasto

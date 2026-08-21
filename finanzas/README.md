@@ -43,8 +43,9 @@ Las migraciones están en `supabase/migrations/` y se aplican en orden:
 | `0010_workspaces.sql` | Espacios de trabajo: `workspaces` + `workspace_id` en las ocho tablas |
 | `0011_workspace_default.sql` | `default_workspace()` como DEFAULT de `workspace_id` |
 | `0012_daily_closings.sql` | Cierres diarios del local, cuentas de cobro y `create_business_workspace()` |
+| `0013_closing_reserva.sql` | Cuarta forma de cobro en el parte: Reserva |
 
-Para recrear el proyecto desde cero, ejecuta los doce archivos por orden en el SQL Editor
+Para recrear el proyecto desde cero, ejecuta los trece archivos por orden en el SQL Editor
 de Supabase y cambia `SUPABASE_URL` / `SUPABASE_KEY` en `js/config.js`.
 
 ### 2. Crear tu usuario
@@ -105,11 +106,13 @@ transfers     (id, user_id, from_account_id, to_account_id, amount, date, note, 
 fixed_items   (id, user_id, kind, name, amount, frequency, amount_mode, match_text,
                lookback_months, category_id, account_id, day_of_month, is_active,
                note, created_at)
-daily_closings(id, user_id, workspace_id, date, card, online, cash, total, note, created_at)
+daily_closings(id, user_id, workspace_id, date, card, online, cash, reserva, total,
+               note, created_at)
 ```
 
 Las ocho tablas de movimiento llevan además `workspace_id`, y `accounts` un `role`
-(`card | online | cash`) para las cuentas de cobro del local. `incomes` lleva `closing_id`.
+(`card | online | cash | reserva`) para las cuentas de cobro del local. `incomes` lleva
+`closing_id`.
 
 `expenses` e `incomes` llevan además un `account_id` opcional. Nulo significa "sin asignar"
 y cuenta como personal, así que todo lo registrado antes de que existieran las cuentas sigue
@@ -306,18 +309,19 @@ por defecto del usuario. Así, un cliente que no envíe la columna sigue escribi
 espacio personal en lugar de fallar.
 
 Crear el espacio de empresa es una sola llamada a `create_business_workspace(nombre)`: crea
-el espacio, sus diez categorías de negocio y sus tres cuentas de cobro en la misma
+el espacio, sus diez categorías de negocio y sus cuatro cuentas de cobro en la misma
 transacción, para que no pueda quedar a medias.
 
 ### Cierres diarios
 
 La pantalla **Cierres** sustituye a *Plan* en la barra cuando estás en un espacio de empresa.
-Un cierre es el parte del día: **tarjeta, online y efectivo**. El total es una columna
+Un cierre es el parte del día: **tarjeta, online, efectivo y reserva**. El total es una columna
 `GENERATED STORED`, y hay un único parte por día y espacio (índice único; si repites fecha,
 la app te manda a editarlo en vez de duplicarlo).
 
 Guardar un parte crea además **un ingreso por cada forma de cobro con importe**, cada uno en
-su cuenta (`accounts.role` = `card | online | cash`) y en la categoría *Facturación*. Son
+su cuenta (`accounts.role` = `card | online | cash | reserva`) y en la categoría
+*Facturación*. Son
 ingresos normales, así que el análisis, el histórico y el cierre del mes los ven sin saber
 nada de cierres; y como son los mismos euros contados una sola vez, no hay doble conteo.
 

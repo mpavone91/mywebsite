@@ -1,6 +1,8 @@
 import { supabase } from './supabase.js';
 import { monthKey, shiftMonth, monthRange, todayISO, round2 } from './utils.js';
 import { isPersonal } from './accounts.js';
+// Las formas de cobro se declaran una sola vez, en el motor de cierres
+import { METHODS, closingTotal } from './closings.js';
 
 /**
  * Estado en memoria de la app.
@@ -195,13 +197,10 @@ function normalizeAccount(row) {
 }
 
 function normalizeClosing(row) {
-  return {
-    ...row,
-    card: Number(row.card),
-    online: Number(row.online),
-    cash: Number(row.cash),
-    total: Number(row.total),
-  };
+  const out = { ...row, total: Number(row.total) };
+  // Una forma de cobro añadida después llega ausente en los partes viejos
+  for (const m of METHODS) out[m.key] = Number(row[m.key]) || 0;
+  return out;
 }
 
 /** Toda consulta va acotada al espacio activo: las contabilidades no se mezclan. */
@@ -431,12 +430,6 @@ export async function deleteCategory(id) {
 
 /* --------------------------------------------------------- cierres diarios --- */
 
-const METHODS = [
-  { key: 'card', role: 'card', label: 'Tarjeta' },
-  { key: 'online', role: 'online', label: 'Online' },
-  { key: 'cash', role: 'cash', label: 'Efectivo' },
-];
-
 const takingsCategory = () =>
   state.categories.find((c) => c.type === 'income' && /facturaci/i.test(c.name))
   || categoriesOf('income')[0]
@@ -472,15 +465,11 @@ async function createClosingIncomes(closing) {
   return data.map(normalize);
 }
 
-export async function addClosing({ date, card, online, cash, note }) {
-  const payload = {
-    date: date || todayISO(),
-    card: round2(card || 0),
-    online: round2(online || 0),
-    cash: round2(cash || 0),
-    note: note?.trim() || null,
-  };
-  if (payload.card + payload.online + payload.cash <= 0) {
+export async function addClosing({ date, note, ...amounts }) {
+  const payload = { date: date || todayISO(), note: note?.trim() || null };
+  for (const m of METHODS) payload[m.key] = round2(amounts[m.key] || 0);
+
+  if (closingTotal(payload) <= 0) {
     throw new Error('El cierre tiene que llevar algún importe');
   }
 
