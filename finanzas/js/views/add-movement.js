@@ -3,7 +3,7 @@ import { openSheet, confirmSheet, amountKeypad } from '../ui.js';
 import { accountChips, rememberedAccount, rememberAccount } from './accounts.js';
 import {
   addExpense, addIncome, updateMovement, deleteMovement,
-  frequentExpenseCategories, categoriesOf, state,
+  frequentExpenseCategories, categoriesOf, state, isBusiness,
 } from '../store.js';
 
 /**
@@ -72,6 +72,19 @@ export function openExpenseSheet({ movement = null, prefill = null, onSaved } = 
           <div class="section-title">Pagado desde</div>
           <div data-accounts></div>
         </div>
+        <div data-partner-block hidden>
+          <label class="switch card" style="padding:12px 14px">
+            <span>
+              <strong style="font-size:15px">Es de un socio</strong>
+              <span class="tiny muted" style="display:block">Sale de la caja, pero no es un gasto del local</span>
+            </span>
+            <input type="checkbox" data-is-partner>
+          </label>
+          <div data-partner-pick hidden style="margin-top:10px">
+            <div class="section-title">De quién</div>
+            <div data-partner-chips></div>
+          </div>
+        </div>
         <details data-more ${editing || prefill ? 'open' : ''}>
           <summary class="muted small" style="cursor:pointer;padding:8px 0">Fecha, nota y recurrencia</summary>
           <div class="stack" style="padding-top:8px">
@@ -105,11 +118,53 @@ export function openExpenseSheet({ movement = null, prefill = null, onSaved } = 
       body.querySelector('[data-accounts-block]').hidden = false;
     }
 
+    // En un espacio de empresa, un gasto puede ser en realidad una retirada de
+    // socio. Elegirlo aquí evita tener que ir a otra pantalla a apuntarlo.
+    const partners = isBusiness() ? state.partners : [];
+    let partnerId = initial?.partner_id ?? null;
+    if (partners.length) {
+      const block = body.querySelector('[data-partner-block]');
+      const pick = body.querySelector('[data-partner-pick]');
+      const toggle = body.querySelector('[data-is-partner]');
+      const chipsBox = body.querySelector('[data-partner-chips]');
+      block.hidden = false;
+
+      const paintPartners = () => {
+        chipsBox.replaceChildren(...partners.map((p) => {
+          const chip = el(`<button type="button" class="chip${p.id === partnerId ? ' active' : ''}">${esc(p.name)}</button>`);
+          chip.addEventListener('click', () => {
+            partnerId = p.id;
+            paintPartners();
+            refresh();
+          });
+          return chip;
+        }));
+      };
+
+      toggle.checked = Boolean(partnerId);
+      pick.hidden = !toggle.checked;
+      if (toggle.checked) paintPartners();
+
+      toggle.addEventListener('change', () => {
+        pick.hidden = !toggle.checked;
+        if (toggle.checked) {
+          partnerId = partnerId || partners[0].id;
+          paintPartners();
+        } else {
+          partnerId = null;
+        }
+        refresh();
+      });
+    }
+
     const saveBtn = body.querySelector('[data-save]');
     const refresh = () => {
       const amount = keypad.value;
       saveBtn.disabled = !(amount > 0);
-      saveBtn.textContent = amount > 0 ? `Guardar ${eur(amount)}` : 'Guardar gasto';
+      const socio = partners.find((p) => p.id === partnerId);
+      saveBtn.textContent = amount > 0
+        ? `Guardar ${eur(amount)}${socio ? ` · ${socio.name}` : ''}`
+        : 'Guardar gasto';
     };
     keypad.onChange(refresh);
     chips.onChange(refresh);
@@ -127,6 +182,7 @@ export function openExpenseSheet({ movement = null, prefill = null, onSaved } = 
         note: body.querySelector('[data-note]').value,
         date: body.querySelector('[data-date]').value || todayISO(),
         is_recurring: body.querySelector('[data-recurring]').checked,
+        partner_id: partnerId,
       };
 
       try {

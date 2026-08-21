@@ -44,8 +44,9 @@ Las migraciones están en `supabase/migrations/` y se aplican en orden:
 | `0011_workspace_default.sql` | `default_workspace()` como DEFAULT de `workspace_id` |
 | `0012_daily_closings.sql` | Cierres diarios del local, cuentas de cobro y `create_business_workspace()` |
 | `0013_closing_reserva.sql` | Cuarta forma de cobro en el parte: Reserva |
+| `0014_partners.sql` | Socios, su cuenta corriente con el negocio y la vista `partner_balances` |
 
-Para recrear el proyecto desde cero, ejecuta los trece archivos por orden en el SQL Editor
+Para recrear el proyecto desde cero, ejecuta los catorce archivos por orden en el SQL Editor
 de Supabase y cambia `SUPABASE_URL` / `SUPABASE_KEY` en `js/config.js`.
 
 ### 2. Crear tu usuario
@@ -108,6 +109,7 @@ fixed_items   (id, user_id, kind, name, amount, frequency, amount_mode, match_te
                note, created_at)
 daily_closings(id, user_id, workspace_id, date, card, online, cash, reserva, total,
                note, created_at)
+partners      (id, user_id, workspace_id, name, color, is_me, note, created_at)
 ```
 
 Las ocho tablas de movimiento llevan además `workspace_id`, y `accounts` un `role`
@@ -335,8 +337,68 @@ gastos, con su margen) en vez de *Gastado este mes*, *Facturado hoy* y la factur
 prevista a fin de mes al ritmo de los días con parte.
 
 La media es **por día con parte**, no por día natural: un local que cierra los lunes no debe
-salir penalizado. Por eso mismo, cuando faltan tres o más partes del mes, la pantalla lo
-avisa en vez de dar por buena una facturación incompleta.
+salir penalizado.
+
+### Los días que el local no abre
+
+No se preguntan ni se configuran: se deducen de los propios partes. Si desde que se lleva el
+registro han pasado ya **tres domingos y ninguno tiene parte**, el local cierra los domingos.
+Un martes olvidado no cuenta, porque los demás martes sí lo tienen.
+
+Esos días dejan de contar como partes que faltan y salen de la proyección: el mes tiene menos
+días de apertura, no menos facturación. La pantalla lo dice en voz alta (*"cierra los
+domingos"*) para que se vea qué ha deducido la app, y se puede corregir sin más que apuntar un
+parte de ese día.
+
+El límite de la regla es conocido: si se olvidan **todos** los martes de un mes, la app los lee
+como día de cierre. Sin más señal que los partes, no hay forma de distinguir una cosa de la
+otra. La ventana mira como mucho 90 días atrás, así que un cambio de horario se asienta solo.
+
+Cuando aún faltan partes de días de apertura —tres o más—, la pantalla lo avisa en vez de dar
+por buena una facturación incompleta.
+
+---
+
+## Socios: la cuenta corriente con el negocio
+
+Cuando un socio paga algo suyo con dinero del negocio, el negocio no ha gastado: ha
+**prestado**. Y cuando aporta dinero, no ha facturado: le han devuelto parte de ese préstamo.
+Meter esas dos cosas entre los gastos y los ingresos del local falsearía el resultado del mes,
+que es justo el número que se mira para saber si el negocio va bien.
+
+Por eso los movimientos de socio van marcados con `partner_id`:
+
+- Un **gasto** con `partner_id` es una *retirada*. Sale de la cuenta que sea —ese dinero ya no
+  está— pero no cuenta como gasto del local ni entra en el análisis por categorías.
+- Un **ingreso** con `partner_id` es una *aportación*. Entra en la cuenta, pero no es
+  facturación.
+
+El saldo de cada socio **no se guarda**: se deriva siempre de `retiradas − aportaciones`, igual
+que el pendiente de una deuda, así que no puede desincronizarse. Un socio con movimientos no se
+puede borrar (`on delete restrict`), porque su saldo dejaría de cuadrar.
+
+Un gasto se puede marcar como de un socio en el momento de apuntarlo, sin ir a otra pantalla:
+en un espacio de empresa el formulario ofrece el interruptor *"Es de un socio"*.
+
+La home del negocio lleva una tira con **cuánto ha sacado cada socio**, y la pantalla *Socios*
+tiene la ficha de cada uno con lo sacado, lo devuelto y su saldo.
+
+### El espejo en lo personal
+
+Un socio puede marcarse como **`is_me`**: el que es el propio dueño de la cuenta. Sólo puede
+haber uno por espacio.
+
+- En su espacio **personal**, la home enseña *"Le debes al negocio X"*, leído de la vista
+  `partner_balances` (que cruza espacios a propósito: el saldo vive en el de empresa).
+- Al registrar una **aportación** suya, el panel ofrece apuntarla además como **gasto en su
+  espacio personal** — ese dinero sí sale de su bolsillo. El gasto queda enlazado por
+  `partner_income_id`, así que borrar la aportación se lo lleva.
+
+Si el espejo personal falla al guardarse, **la aportación no se deshace**: ese dinero entró en
+el negocio de verdad, y borrarlo mentiría. Se avisa y ya está.
+
+Los socios que no son uno mismo (una esposa, otro socio) se llevan sólo en el lado del negocio:
+su espacio personal es de otra cuenta de usuario, y el RLS —con razón— no deja escribir ahí.
 
 ---
 
@@ -378,13 +440,14 @@ finanzas/
 │   ├── analysis.js           motor de análisis (funciones puras)
 │   ├── debts.js              motor de deudas: amortización y estrategias de salida
 │   ├── closings.js           motor de cierres: facturación, media y resultado del mes
+│   ├── partners.js           motor de socios: retiradas, aportaciones y saldos
 │   ├── lock.js               acceso con PIN / huella y cifrado de la sesión
 │   ├── charts.js             envoltorio de Chart.js
 │   ├── ui.js                 paneles inferiores, confirmaciones, estados de carga
 │   ├── app.js                router y navegación
 │   └── views/                dashboard · add-movement · debts · analysis · history
 │                             categories · accounts · plan · closings · workspaces
-│                             auth · lock
+│                             partners · auth · lock
 ├── vendor/                   supabase-js y chart.js con la versión fijada
 └── supabase/migrations/
 ```

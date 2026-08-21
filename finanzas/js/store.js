@@ -1,5 +1,5 @@
 import { supabase } from './supabase.js';
-import { monthKey, shiftMonth, monthRange, todayISO, round2 } from './utils.js';
+import { monthKey, shiftMonth, monthRange, todayISO, round2, sum } from './utils.js';
 import { isPersonal } from './accounts.js';
 // Las formas de cobro se declaran una sola vez, en el motor de cierres
 import { METHODS, closingTotal } from './closings.js';
@@ -28,6 +28,8 @@ export const state = {
   transfers: [],
   fixedItems: [],
   closings: [],
+  partners: [],
+  partnerBalances: [],   // saldo de los socios de cada espacio de empresa
   workspaces: [],
   workspaceId: null,   // espacio activo: Personal, Empresa…
   loadedFrom: null,   // fecha ISO más antigua cargada
@@ -102,6 +104,8 @@ function clearState() {
   state.transfers = [];
   state.fixedItems = [];
   state.closings = [];
+  state.partners = [];
+  state.partnerBalances = [];
   state.workspaces = [];
   state.workspaceId = null;
   state.loadedFrom = null;
@@ -237,7 +241,8 @@ const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 async function fetchEverything() {
   const from = `${shiftMonth(monthKey(), -(WINDOW_MONTHS - 1))}-01`;
 
-  const [cats, expenses, incomes, debts, debtPayments, accounts, transfers, fixedItems, closings] = await Promise.all([
+  const [cats, expenses, incomes, debts, debtPayments, accounts, transfers, fixedItems,
+    closings, partners] = await Promise.all([
     inWorkspace('categories').order('type').order('name'),
     fetchRange('expenses', from),
     fetchRange('incomes', from),
@@ -249,12 +254,16 @@ async function fetchEverything() {
     inWorkspace('transfers').order('date', { ascending: false }),
     inWorkspace('fixed_items').order('kind').order('name'),
     inWorkspace('daily_closings').gte('date', from).order('date', { ascending: false }),
+    inWorkspace('partners').order('created_at'),
   ]);
-  for (const result of [cats, debts, debtPayments, accounts, transfers, fixedItems, closings]) {
+  for (const result of [cats, debts, debtPayments, accounts, transfers, fixedItems, closings, partners]) {
     if (result.error) throw result.error;
   }
 
-  return { from, cats, expenses, incomes, debts, debtPayments, accounts, transfers, fixedItems, closings };
+  return {
+    from, cats, expenses, incomes, debts, debtPayments, accounts, transfers, fixedItems,
+    closings, partners,
+  };
 }
 
 export async function loadAll(attempt = 0) {
@@ -280,6 +289,7 @@ export async function loadAll(attempt = 0) {
   state.transfers = data.transfers.data.map(normalize);
   state.fixedItems = data.fixedItems.data.map(normalize);
   state.closings = data.closings.data.map(normalizeClosing);
+  state.partners = data.partners.data;
   state.loadedFrom = data.from;
   state.ready = true;
 
@@ -338,7 +348,9 @@ const stamped = (payload) => ({ ...payload, workspace_id: state.workspaceId });
 
 const byDateDesc = (a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : (a.created_at < b.created_at ? 1 : -1));
 
-export async function addExpense({ amount, category_id, account_id, note, date, is_recurring }) {
+export async function addExpense({
+  amount, category_id, account_id, note, date, is_recurring, partner_id,
+}) {
   const payload = {
     amount: round2(amount),
     category_id: category_id || null,
@@ -346,6 +358,9 @@ export async function addExpense({ amount, category_id, account_id, note, date, 
     note: note?.trim() || null,
     date: date || todayISO(),
     is_recurring: Boolean(is_recurring),
+    // Con socio, el gasto es una retirada: mueve el dinero pero no es un gasto
+    // del negocio. Lo decide partners.js, no aquí.
+    partner_id: partner_id || null,
   };
   const { data, error } = await supabase.from('expenses').insert(stamped(payload)).select().single();
   if (error) throw error;
@@ -530,6 +545,150 @@ export async function deleteClosing(id) {
 
 export const closingForDate = (date) => state.closings.find((c) => c.date === date) || null;
 
+/* ------------------------------------------------------------------ socios --- */
+
+export async function addPartner({ name, color, is_me, note }) {
+  const payload = {
+    name: name.trim(),
+    color: color || '#6366f1',
+    is_me: Boolean(is_me),
+    note: note?.trim() || null,
+  };
+  const { data, error } = await supabase.from('partners').insert(stamped(payload)).select().single();
+  if (error) throw error;
+  state.partners = [...state.partners, data];
+  emit();
+  return data;
+}
+
+export async function updatePartner(id, patch) {
+  const payload = { ...patch };
+  if (payload.name !== undefined) payload.name = payload.name.trim();
+  const { data, error } = await supabase
+    .from('partners').update(payload).eq('id', id).select().single();
+  if (error) throw error;
+  state.partners = state.partners.map((p) => (p.id === id ? data : p));
+  emit();
+  return data;
+}
+
+/**
+ * Un socio con movimientos no se borra: su saldo dejaría de cuadrar y las
+ * retiradas se quedarían huérfanas. La FK lo impide en el servidor; aquí se
+ * avisa antes, en castellano.
+ */
+export async function deletePartner(id) {
+  const usado = state.expenses.some((e) => e.partner_id === id)
+    || state.incomes.some((i) => i.partner_id === id);
+  if (usado) throw new Error('Ese socio tiene movimientos: no se puede borrar sin descuadrar su saldo');
+
+  const { error } = await supabase.from('partners').delete().eq('id', id);
+  if (error) throw error;
+  state.partners = state.partners.filter((p) => p.id !== id);
+  emit();
+}
+
+/**
+ * Retirada: un socio paga algo suyo con dinero del negocio.
+ *
+ * Es un gasto normal para la cuenta de la que sale —ese dinero ya no está—
+ * pero marcado con el socio, así que queda fuera del resultado del mes.
+ */
+export const addDraw = ({ partner_id, amount, account_id, note, date }) =>
+  addExpense({ partner_id, amount, account_id, note, date, category_id: null });
+
+/**
+ * Aportación: el socio devuelve dinero al negocio.
+ *
+ * Entra en la cuenta del negocio como ingreso marcado (no es facturación) y,
+ * si el socio es uno mismo, se apunta además el gasto en el espacio personal:
+ * ese dinero sí ha salido del bolsillo.
+ */
+export async function addContribution({
+  partner_id, amount, account_id, note, date, personal = null,
+}) {
+  const partner = state.partners.find((p) => p.id === partner_id);
+  const payload = {
+    amount: round2(amount),
+    account_id: account_id || null,
+    partner_id,
+    category_id: null,
+    source: note?.trim() || `Aportación de ${partner?.name || 'socio'}`,
+    date: date || todayISO(),
+    is_recurring: false,
+  };
+
+  const { data, error } = await supabase.from('incomes').insert(stamped(payload)).select().single();
+  if (error) throw error;
+
+  // El espejo en lo personal, si se ha pedido: el mismo dinero visto desde el
+  // otro lado. Va con workspace_id explícito porque es de OTRO espacio.
+  if (personal?.workspace_id) {
+    const { error: mirrorError } = await supabase.from('expenses').insert({
+      workspace_id: personal.workspace_id,
+      amount: round2(amount),
+      account_id: personal.account_id || null,
+      category_id: personal.category_id || null,
+      // El concepto que escribió ("devolución") no dice nada fuera del negocio:
+      // en su espacio personal lo que se entiende es de dónde viene el gasto.
+      note: `Aportación al negocio${note?.trim() ? ` · ${note.trim()}` : ''}`,
+      date: payload.date,
+      is_recurring: false,
+      partner_income_id: data.id,
+    });
+    // Si el espejo falla, la aportación al negocio sigue siendo cierta: no se
+    // deshace, se avisa. Deshacerla mentiría sobre el dinero que ya entró.
+    if (mirrorError) {
+      state.incomes = [normalize(data), ...state.incomes].sort(byDateDesc);
+      emit();
+      throw new Error('La aportación se guardó, pero no se pudo apuntar el gasto en tu espacio personal');
+    }
+  }
+
+  state.incomes = [normalize(data), ...state.incomes].sort(byDateDesc);
+  emit();
+  return normalize(data);
+}
+
+/** Deshace una aportación y, con ella, el gasto personal que generó. */
+export async function deleteContribution(id) {
+  const { error } = await supabase.from('incomes').delete().eq('id', id);
+  if (error) throw error;
+  state.incomes = state.incomes.filter((i) => i.id !== id);
+  state.expenses = state.expenses.filter((e) => e.partner_income_id !== id);
+  emit();
+}
+
+/**
+ * Saldo de los socios de TODOS los espacios, no sólo del activo.
+ *
+ * Hace falta en lo personal: estando en Personal hay que poder decir cuánto le
+ * debes al negocio, y esos movimientos viven en el espacio de empresa.
+ */
+export async function loadPartnerBalances() {
+  const { data, error } = await supabase.from('partner_balances').select('*');
+  if (error) {
+    // Es información de apoyo: si falla, la app sigue funcionando sin ella
+    state.partnerBalances = [];
+    return [];
+  }
+  state.partnerBalances = data.map((r) => ({
+    ...r,
+    drawn: Number(r.drawn),
+    contributed: Number(r.contributed),
+    balance: Number(r.balance),
+  }));
+  return state.partnerBalances;
+}
+
+/** Lo que debes tú al negocio, mirado desde tu espacio personal. */
+export const myBusinessDebt = () => {
+  const mine = state.partnerBalances.filter((r) => r.is_me && r.workspace_id !== state.workspaceId);
+  return mine.length
+    ? { balance: round2(sum(mine, (r) => r.balance)), rows: mine }
+    : null;
+};
+
 /* ---------------------------------------------------------------- cuentas --- */
 
 export async function addAccount(payload) {
@@ -611,9 +770,11 @@ export const accountById = (id) => state.accounts.find((a) => a.id === id) || nu
  * análisis: el dinero del negocio no puede ensuciar tu tasa de ahorro.
  */
 export function personalData() {
-  const personal = (row) => isPersonal(row.account_id, state.accounts);
+  const personal = (row) => isPersonal(row.account_id, state.accounts) && !row.partner_id;
   return {
     categories: state.categories,
+    // Las retiradas y aportaciones de los socios mueven dinero pero no son
+    // gasto ni ingreso: quedan fuera de los totales y del análisis.
     expenses: state.expenses.filter(personal),
     incomes: state.incomes.filter(personal),
   };
