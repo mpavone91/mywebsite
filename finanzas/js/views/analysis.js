@@ -1,10 +1,11 @@
 import { el, esc, eur, pct, monthKey, monthLabel, daysInMonth, elapsedDays, round2 } from '../utils.js';
-import { state, personalData } from '../store.js';
+import { state, personalData, isBusiness } from '../store.js';
 import { analyzeMonth } from '../analysis.js';
 import { debtInsights } from '../debts.js';
 import { accountInsights } from '../accounts.js';
 import { closingInsights } from '../closings.js';
 import { partnerInsights } from '../partners.js';
+import { breakEvenInsights } from '../breakeven.js';
 import { planInsights } from '../plan.js';
 import { RULES } from '../config.js';
 import { incomeVsExpenseBars, cumulativeSpendLine } from '../charts.js';
@@ -48,17 +49,34 @@ export function renderAnalysis() {
 
   // Las tarjetas de deuda se calculan aparte (debts.js) y se mezclan aquí,
   // ordenadas otra vez por gravedad para que lo urgente quede arriba del todo.
+  // Reglas que sólo tienen sentido en las finanzas de una persona: en un local
+  // "ahorras el 60 %" o "esto encaja en el 50/30/20" no dicen nada, y ocupan el
+  // sitio de lo que sí importa —cuánto hay que facturar y adónde va el dinero.
+  const PERSONALES = new Set([
+    'savings-negative', 'savings-low', 'savings-good', 'savings-ok',
+    'budget-503020', 'emergency', 'ants',
+    // "Cierre previsto" choca de frente con el cierre diario del local
+    'projection',
+    'plan-shortfall', 'plan-margin', 'plan-progress', 'plan-heavy',
+  ]);
+  const business = isBusiness();
+  const quitaPersonales = (list) => (business ? list.filter((i) => !PERSONALES.has(i.id)) : list);
+
   const rank = { alert: 0, warn: 1, good: 2, info: 3 };
   const insights = [
-    ...a.insights,
+    ...quitaPersonales(a.insights),
     ...debtInsights(state.debts, state.debtPayments, {
       expenses: state.expenses, incomes: state.incomes, month,
     }),
     ...accountInsights(state, month),
-    ...planInsights(state, month),
+    ...quitaPersonales(planInsights(state, month)),
     // Sólo dan tarjetas si hay cierres o socios, o sea sólo en un negocio
     ...closingInsights(state, month),
     ...partnerInsights(state, month),
+    ...breakEvenInsights(
+      { ...state, profitGoal: state.workspaces.find((w) => w.id === state.workspaceId)?.profit_goal },
+      month,
+    ),
   ]
     .map((insight, i) => ({ insight, i }))
     .sort((x, y) => (rank[x.insight.level] - rank[y.insight.level]) || (x.i - y.i))

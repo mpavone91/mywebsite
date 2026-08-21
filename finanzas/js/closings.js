@@ -158,25 +158,33 @@ export function monthResult(closings, expenses, month = monthKey()) {
 /* -------------------------------------------------------------- insights --- */
 
 /** Tarjetas de análisis del negocio, en el formato del resto. */
-export function closingInsights({ closings = [], expenses = [] }, month = monthKey()) {
+export function closingInsights(data, month = monthKey()) {
+  const { closings = [], expenses = [], fixedItems = [] } = data;
   const out = [];
   const view = takings(closings, month);
   if (!view.closings) return out;
 
   const result = monthResult(closings, expenses, month);
 
-  out.push({
-    id: 'takings',
-    level: result.result < 0 ? 'alert' : 'info',
-    icon: '🧾',
-    title: result.result < 0
-      ? `El mes va en pérdidas: ${eur(result.result)}`
-      : `Resultado del mes: ${eur(result.result)}`,
-    body: `${eur(view.total)} facturados en ${view.closings} ${view.closings === 1 ? 'día' : 'días'} de parte, menos ${eur(result.expense)} de gastos.`,
-    action: result.margin !== null
-      ? `Margen del ${pct(result.margin)} · media de ${eur(view.average)} por día abierto.`
-      : null,
-  });
+  // Con un plan de gastos fijos declarado, el resultado "con lo apuntado" y el
+  // mínimo a facturar dirían cosas distintas del mismo mes y parecerían
+  // contradecirse. Manda el del plan, que cuenta el mes entero.
+  const conPlan = fixedItems.some((f) => f.is_active && f.kind === 'expense');
+
+  if (!conPlan) {
+    out.push({
+      id: 'takings',
+      level: result.result < 0 ? 'alert' : 'info',
+      icon: '🧾',
+      title: result.result < 0
+        ? `El mes va en pérdidas: ${eur(result.result)}`
+        : `Resultado del mes: ${eur(result.result)}`,
+      body: `${eur(view.total)} facturados en ${view.closings} ${view.closings === 1 ? 'día' : 'días'} de parte, menos ${eur(result.expense)} de gastos.`,
+      action: result.margin !== null
+        ? `Margen del ${pct(result.margin)} · media de ${eur(view.average)} por día abierto.`
+        : null,
+    });
+  }
 
   if (view.missing >= 3) {
     const cierra = view.closedWeekdays.length

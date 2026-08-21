@@ -1,8 +1,9 @@
 import { el, esc, eur, pct, monthKey, monthLabel, todayISO, toast, haptic, round2 } from '../utils.js';
 import {
   state, addFixedItem, updateFixedItem, deleteFixedItem,
-  addExpense, addIncome, categoriesOf,
+  addExpense, addIncome, categoriesOf, isBusiness, setProfitGoal, activeWorkspace,
 } from '../store.js';
+import { breakEven } from '../breakeven.js';
 import {
   planOverview, suggestFixedIncome, FREQUENCIES, frequencyMeta,
   monthlyAmount, declaredMonthly, averageFor,
@@ -15,6 +16,7 @@ import { openExpenseSheet, openIncomeSheet } from './add-movement.js';
 
 export function renderPlan() {
   const month = monthKey();
+  const business = isBusiness();
   const plan = planOverview(state, month);
 
   const screen = el(`
@@ -22,7 +24,9 @@ export function renderPlan() {
       <div class="screen-head">
         <div>
           <h1>Plan</h1>
-          <p>Lo que entra y sale cada mes, pase lo que pase</p>
+          <p>${business
+    ? 'Lo que cuesta tener el local abierto'
+    : 'Lo que entra y sale cada mes, pase lo que pase'}</p>
         </div>
       </div>
       <div class="stack" data-body></div>
@@ -30,6 +34,23 @@ export function renderPlan() {
   `);
 
   const body = screen.querySelector('[data-body]');
+
+  // En el negocio no hay ingreso fijo: la facturación es diaria y variable. La
+  // pregunta se da la vuelta —cuánto hay que facturar para cubrir esto— y por
+  // eso el plan de empresa se pinta entero de otra manera.
+  if (business) {
+    const view = breakEven({ ...state, profitGoal: profitGoal() }, month);
+    if (!plan.hasPlan) {
+      body.appendChild(emptyBusinessPlan());
+      return screen;
+    }
+    body.appendChild(targetCard(view));
+    body.appendChild(targetBreakdown(view));
+    body.appendChild(goalCard(view));
+    if (plan.pending.length) body.appendChild(pendingCard(plan));
+    body.appendChild(itemsSection('expense', 'Gastos fijos del negocio', plan.fixedExpenses));
+    return screen;
+  }
 
   if (!plan.hasPlan) {
     body.appendChild(emptyPlan());
@@ -43,6 +64,158 @@ export function renderPlan() {
   body.appendChild(itemsSection('expense', 'Gastos fijos', plan.fixedExpenses));
 
   return screen;
+}
+
+const profitGoal = () => Number(activeWorkspace()?.profit_goal || 0);
+
+/* ------------------------------------------------------ plan del negocio --- */
+
+function emptyBusinessPlan() {
+  const card = el(`
+    <div class="card">
+      ${emptyState('Todavía no sabes lo que cuesta tener el local abierto.')}
+      <p class="small muted center" style="margin:0 0 16px">
+        Apunta lo que se va todos los meses pase lo que pase —alquiler, nóminas, suministros,
+        gestoría, seguros— y la app te dirá cuánto tienes que facturar como mínimo para
+        cubrirlo, y cuánto por cada día que abres.
+      </p>
+      <button class="btn btn-primary btn-block" data-expense>+ Gasto fijo del negocio</button>
+    </div>
+  `);
+  card.querySelector('[data-expense]').addEventListener('click', () => openFixedSheet({ kind: 'expense' }));
+  return card;
+}
+
+/** El titular del negocio: cuánto hay que facturar para no perder dinero. */
+function targetCard(view) {
+  const cubierto = view.overMinimum >= 0;
+
+  return el(`
+    <div class="card balance-card">
+      <div class="balance-label">Para cubrir ${monthLabel(view.month)} tienes que facturar</div>
+      <div class="balance-value num">${eur(view.minimum)}</div>
+      <div class="balance-sub">
+        Son <strong>${eur(view.minimumPerDay)}</strong> por cada uno de los ${view.openTotal}
+        días ${view.openTotal < 28 ? 'que abres' : 'del mes'}
+      </div>
+      <div class="bar" style="margin-top:12px">
+        <i style="width:${Math.min((view.coverage || 0) * 100, 100).toFixed(1)}%;
+                  background:${cubierto ? 'var(--pos)' : 'var(--accent)'}"></i>
+      </div>
+      <div class="row-between tiny muted" style="margin-top:6px">
+        <span>${eur(view.billed)} facturados${view.coverage !== null ? ` · ${pct(Math.min(view.coverage, 1))}` : ''}</span>
+        <span>${cubierto
+    ? `${eur(view.overMinimum)} por encima`
+    : `faltan ${eur(view.missingToMinimum)}`}</span>
+      </div>
+    </div>
+  `);
+}
+
+/** De qué se compone ese mínimo, y cómo va el mes. */
+function targetBreakdown(view) {
+  const alDia = view.openLeft > 0 && view.missingToMinimum > 0
+    ? round2(view.missingToMinimum / view.openLeft)
+    : 0;
+
+  return el(`
+    <div class="card">
+      <div class="metric-row">
+        <span>Gastos fijos</span>
+        <span class="num">${eur(view.fixed)}</span>
+      </div>
+      <div class="metric-row">
+        <span>Gastos variables del mes</span>
+        <span class="num">${eur(view.variable)}</span>
+      </div>
+      <div class="metric-row" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+        <strong>= Mínimo a facturar</strong>
+        <strong class="num">${eur(view.minimum)}</strong>
+      </div>
+      <p class="tiny muted" style="margin:12px 0 0">
+        ${view.onTrack
+    ? `Vas al ritmo: a estas alturas del mes tocaría llevar ${eur(view.expectedSoFar)} y llevas ${eur(view.billed)}.`
+    : `Vas por detrás: a estas alturas tocaría llevar ${eur(view.expectedSoFar)} y llevas ${eur(view.billed)}.`}
+        ${alDia > 0 ? ` Quedan ${view.openLeft} días de apertura: ${eur(alDia)} al día para llegar.` : ''}
+      </p>
+    </div>
+  `);
+}
+
+/** Lo que quieres ganar, y lo que hay que facturar para conseguirlo. */
+function goalCard(view) {
+  const card = el(`
+    <div class="card">
+      <div class="row-between" style="gap:10px">
+        <span style="min-width:0">
+          <strong style="font-size:15px;display:block">Objetivo de ganancia</strong>
+          <span class="tiny muted">${view.profitGoal > 0
+    ? `${eur(view.profitGoal)} limpios al mes`
+    : 'Sin definir: dime cuánto quieres ganar'}</span>
+        </span>
+        <button class="btn" data-goal style="min-height:38px">${view.profitGoal > 0 ? 'Cambiar' : 'Poner'}</button>
+      </div>
+
+      ${view.profitGoal > 0 ? `
+        <div class="metric-row" style="margin-top:12px">
+          <span>Facturación objetivo</span>
+          <span class="num">${eur(view.target)}</span>
+        </div>
+        <div class="metric-row">
+          <span>Por día de apertura</span>
+          <span class="num">${eur(view.targetPerDay)}</span>
+        </div>
+        <div class="metric-row">
+          <span>${view.missingToTarget > 0 ? 'Te falta' : 'Ya lo has pasado'}</span>
+          <span class="num ${view.missingToTarget > 0 ? '' : 'pos'}">
+            ${eur(view.missingToTarget > 0 ? view.missingToTarget : round2(view.billed - view.target))}
+          </span>
+        </div>` : ''}
+    </div>
+  `);
+
+  card.querySelector('[data-goal]').addEventListener('click', () => openGoalSheet(view.profitGoal));
+  return card;
+}
+
+function openGoalSheet(current) {
+  return openSheet('Objetivo de ganancia', (close) => {
+    const body = el(`
+      <div class="stack">
+        <p class="small muted" style="margin:0">
+          Cuánto quieres que te deje el negocio cada mes, ya limpio de gastos. Con eso la app
+          calcula cuánto hay que facturar y cuánto por día abierto.
+        </p>
+        <label class="field">
+          <span>Al mes</span>
+          <input type="number" data-goal inputmode="decimal" min="0" step="50" data-autofocus
+                 placeholder="0,00" value="${current > 0 ? current : ''}">
+        </label>
+        <button class="btn btn-primary btn-block btn-lg" data-save>Guardar</button>
+      </div>
+    `);
+
+    const btn = body.querySelector('[data-save]');
+    btn.addEventListener('click', async () => {
+      const value = Number(body.querySelector('[data-goal]').value) || 0;
+      if (value < 0) { toast('El objetivo no puede ser negativo', 'err'); return; }
+
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner"></span>';
+      try {
+        await setProfitGoal(value);
+        haptic(14);
+        close(true);
+        toast(value > 0 ? `Objetivo de ${eur(value)} al mes` : 'Objetivo quitado');
+      } catch (err) {
+        toast(err.message || 'No se pudo guardar', 'err');
+        btn.disabled = false;
+        btn.textContent = 'Guardar';
+      }
+    });
+
+    return body;
+  });
 }
 
 /* ------------------------------------------------------------- vacío ------ */
