@@ -24,6 +24,7 @@ export const state = {
   debtPayments: [],   // se cargan todos: son pocos y hacen falta para el saldo
   accounts: [],
   transfers: [],
+  fixedItems: [],
   loadedFrom: null,   // fecha ISO más antigua cargada
   ready: false,
 };
@@ -94,6 +95,7 @@ function clearState() {
   state.debtPayments = [];
   state.accounts = [];
   state.transfers = [];
+  state.fixedItems = [];
   state.loadedFrom = null;
   state.ready = false;
 }
@@ -162,7 +164,7 @@ const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 async function fetchEverything() {
   const from = `${shiftMonth(monthKey(), -(WINDOW_MONTHS - 1))}-01`;
 
-  const [cats, expenses, incomes, debts, debtPayments, accounts, transfers] = await Promise.all([
+  const [cats, expenses, incomes, debts, debtPayments, accounts, transfers, fixedItems] = await Promise.all([
     supabase.from('categories').select('*').order('type').order('name'),
     fetchRange('expenses', from),
     fetchRange('incomes', from),
@@ -172,12 +174,13 @@ async function fetchEverything() {
     supabase.from('accounts').select('*').order('created_at'),
     // Igual que los pagos: el saldo de cada cuenta necesita el histórico entero
     supabase.from('transfers').select('*').order('date', { ascending: false }),
+    supabase.from('fixed_items').select('*').order('kind').order('name'),
   ]);
-  for (const result of [cats, debts, debtPayments, accounts, transfers]) {
+  for (const result of [cats, debts, debtPayments, accounts, transfers, fixedItems]) {
     if (result.error) throw result.error;
   }
 
-  return { from, cats, expenses, incomes, debts, debtPayments, accounts, transfers };
+  return { from, cats, expenses, incomes, debts, debtPayments, accounts, transfers, fixedItems };
 }
 
 export async function loadAll(attempt = 0) {
@@ -201,6 +204,7 @@ export async function loadAll(attempt = 0) {
   state.debtPayments = data.debtPayments.data.map(normalize);
   state.accounts = data.accounts.data.map(normalizeAccount);
   state.transfers = data.transfers.data.map(normalize);
+  state.fixedItems = data.fixedItems.data.map(normalize);
   state.loadedFrom = data.from;
   state.ready = true;
 
@@ -434,6 +438,44 @@ export function personalData() {
     incomes: state.incomes.filter(personal),
   };
 }
+
+/* ------------------------------------------------------------ plan fijo --- */
+
+export async function addFixedItem(payload) {
+  const { data, error } = await supabase.from('fixed_items').insert(cleanFixed(payload)).select().single();
+  if (error) throw error;
+  state.fixedItems = [...state.fixedItems, normalize(data)].sort(sortFixed);
+  emit();
+  return data;
+}
+
+export async function updateFixedItem(id, patch) {
+  const { data, error } = await supabase.from('fixed_items').update(cleanFixed(patch)).eq('id', id).select().single();
+  if (error) throw error;
+  state.fixedItems = state.fixedItems.map((f) => (f.id === id ? normalize(data) : f)).sort(sortFixed);
+  emit();
+  return data;
+}
+
+export async function deleteFixedItem(id) {
+  const { error } = await supabase.from('fixed_items').delete().eq('id', id);
+  if (error) throw error;
+  state.fixedItems = state.fixedItems.filter((f) => f.id !== id);
+  emit();
+}
+
+function cleanFixed(p) {
+  const out = { ...p };
+  if (out.amount !== undefined) out.amount = round2(out.amount);
+  if (out.name !== undefined) out.name = out.name.trim();
+  if (out.note !== undefined) out.note = out.note?.trim() || null;
+  if (out.day_of_month !== undefined) out.day_of_month = out.day_of_month || null;
+  if (out.category_id !== undefined) out.category_id = out.category_id || null;
+  if (out.account_id !== undefined) out.account_id = out.account_id || null;
+  return out;
+}
+
+const sortFixed = (a, b) => (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : a.name.localeCompare(b.name, 'es'));
 
 /* ----------------------------------------------------------------- deudas --- */
 

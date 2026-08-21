@@ -210,7 +210,7 @@ button { cursor: pointer; }
   left: 0; right: 0; bottom: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   height: calc(var(--nav-h) + var(--safe-b));
   padding-bottom: var(--safe-b);
   background: color-mix(in srgb, var(--surface) 88%, transparent);
@@ -238,7 +238,7 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 .nav a.active { color: var(--accent); }
-.nav a svg { width: 22px; height: 22px; }
+.nav a svg { width: 21px; height: 21px; }
 
 /* ------------------------------------------------------------------- listas */
 
